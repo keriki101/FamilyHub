@@ -62,6 +62,9 @@
             <button type="button" class="pickup-settings-button" @onclick="() => ShowPickupSettingsModal = true">
                 @(PickupSettingsConfigured ? "Ändra personer" : "Välj personer")
             </button>
+            <button type="button" class="pickup-settings-button" @onclick="() => ShowDatabaseBackupModal = true">
+                Säkerhetskopiera
+            </button>
             <form method="post" action="/auth/logout" class="auth-logout">
                 <AntiforgeryToken />
                 <button type="submit">Logga ut</button>
@@ -225,6 +228,11 @@
         OnClose="ClosePickupSettingsModal"
         OnSave="SavePickupSettings" />
 
+    <DatabaseBackupModal
+        IsOpen="@ShowDatabaseBackupModal"
+        OnClose="CloseDatabaseBackupModal"
+        OnRestored="ReloadAfterDatabaseRestore" />
+
     <EventActionsModal
         IsOpen="@ShowEventActionsModal"
         Event="@SelectedEvent"
@@ -263,6 +271,7 @@
     private bool ShowAddEventModal;
     private bool ShowEventActionsModal;
     private bool ShowPickupSettingsModal;
+    private bool ShowDatabaseBackupModal;
     private bool IsSeriesEdit;
     private DateTime WeekStart;
     private DateTime CurrentTime;
@@ -389,7 +398,7 @@
 
     private bool HasOpenDialog =>
         ShowAddPersonModal || ShowAddEventModal || ShowEventActionsModal
-        || ShowPickupSettingsModal || PersonToDelete is not null;
+        || ShowPickupSettingsModal || ShowDatabaseBackupModal || PersonToDelete is not null;
 
     private async Task ReloadCalendarDataAsync(CancellationToken cancellationToken)
     {
@@ -624,6 +633,24 @@
     {
         ShowPickupSettingsModal = false;
         return Task.CompletedTask;
+    }
+
+    private Task CloseDatabaseBackupModal()
+    {
+        ShowDatabaseBackupModal = false;
+        return Task.CompletedTask;
+    }
+
+    private async Task ReloadAfterDatabaseRestore()
+    {
+        var snapshot = await CalendarDataService.LoadAsync(RefreshCancellation.Token);
+        DefaultPeople = snapshot.People;
+        DefaultEvents = snapshot.Events;
+        PickupSettings = snapshot.Settings;
+        SelectedPersonId = null;
+        SelectedEvent = null;
+        PersonToDelete = null;
+        LocalDataVersion++;
     }
 
     private async Task<SaveOperationResult> SavePickupSettings(FamilyHubSettings settings)

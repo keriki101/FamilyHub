@@ -240,6 +240,23 @@ a,
     line-height: 1.4;
 }
 
+.backup-download {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+}
+
+.backup-file-name {
+    overflow-wrap: anywhere;
+    color: var(--ink-muted);
+}
+
+.backup-success {
+    margin: 0 0 12px;
+    color: #286440;
+    font-size: 0.95rem;
+}
+
 .recurrence-options {
     min-width: 0;
     margin: 0 0 18px;

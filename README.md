@@ -89,6 +89,12 @@ Hover over a person card to reveal the edit and delete actions. On touchscreens,
 
 To change the database location, update the `ConnectionStrings:FamilyHub` setting in `FamilyHub.Web/appsettings.json`. Relative paths are resolved from the web project directory. Do not delete the database if you want to keep its data.
 
+### Back up and restore
+
+Select **Säkerhetskopiera** in the dashboard header and choose **Ladda ner säkerhetskopia** to download a consistent SQLite copy. Keep the downloaded `.db` file somewhere safe outside the project folder. It contains family calendar data, so protect it like personal information.
+
+To restore, select a FamilyHub database backup in the same dialog, confirm that you understand it replaces all current calendar data, and select **Återställ databas**. Restore accepts valid backups from the current FamilyHub version up to 50 MB. The uploaded file is checked for database integrity, expected tables and schema, migrations, and valid person/event references before any changes are made. The app creates a temporary safety copy to roll back if applying the restore fails. Ask other household members to close the calendar and do not edit data during restore. Refreshing other open dashboards will show the restored data.
+
 For database model changes, install the EF Core command-line tool matching the project version, then create a migration from the repository root:
 
 ```sh

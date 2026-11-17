@@ -74,6 +74,10 @@ if (!Path.IsPathRooted(sqliteConnectionString.DataSource))
 
 builder.Services.AddDbContextFactory<FamilyHubDbContext>(options =>
     options.UseSqlite(sqliteConnectionString.ToString()));
+builder.Services.AddSingleton(serviceProvider => new SqliteDatabaseBackupService(
+    sqliteConnectionString.DataSource,
+    serviceProvider.GetRequiredService<IDbContextFactory<FamilyHubDbContext>>(),
+    serviceProvider.GetRequiredService<ILogger<SqliteDatabaseBackupService>>()));
 
 var app = builder.Build();
 
@@ -170,6 +174,44 @@ app.MapPost("/auth/logout", async (HttpContext context, IAntiforgery antiforgery
 
     await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     return Results.LocalRedirect("/Auth/Login");
+}).RequireAuthorization();
+app.MapGet("/database/backup", async (
+    HttpContext context,
+    SqliteDatabaseBackupService backupService,
+    ILogger<SqliteDatabaseBackupService> logger) =>
+{
+    string backupPath;
+    try
+    {
+        backupPath = await backupService.CreateBackupAsync(context.RequestAborted);
+    }
+    catch (DatabaseBackupException exception)
+    {
+        return Results.Problem(exception.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+
+    context.Response.OnCompleted(() =>
+    {
+        try
+        {
+            File.Delete(backupPath);
+        }
+        catch (IOException exception)
+        {
+            logger.LogWarning(exception, "Could not remove temporary FamilyHub backup file.");
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            logger.LogWarning(exception, "Could not remove temporary FamilyHub backup file.");
+        }
+
+        return Task.CompletedTask;
+    });
+
+    return Results.File(
+        backupPath,
+        "application/vnd.sqlite3",
+        $"familyhub-backup-{DateTime.UtcNow:yyyyMMdd-HHmmss}.db");
 }).RequireAuthorization();
 app.MapRazorComponents<App>()
     .RequireAuthorization()

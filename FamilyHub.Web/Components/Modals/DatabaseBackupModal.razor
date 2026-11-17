@@ -1,0 +1,149 @@
+@using FamilyHub.Web.Services
+@using Microsoft.AspNetCore.Components.Forms
+
+<BaseModal IsOpen="@IsOpen" OnClose="Close">
+    <div class="modal-header">
+        <h2>Säkerhetskopiera kalendern</h2>
+        <button type="button" class="close-btn" aria-label="Stäng" @onclick="Close">✕</button>
+    </div>
+
+    <p>Ladda ner en säkerhetskopia av hela kalenderdatabasen till din enhet.</p>
+    <a class="save-btn backup-download" href="/database/backup">Ladda ner säkerhetskopia</a>
+
+    <hr />
+
+    <h3>Återställ från säkerhetskopia</h3>
+    <p>Återställningen ersätter kalenderns alla personer, event och inställningar. Ladda gärna ner en säkerhetskopia först och be andra användare stänga kalendern under återställningen.</p>
+    <div class="form-group">
+        <label for="backupFile">Välj en FamilyHub-säkerhetskopia (max 50 MB)</label>
+        <InputFile id="backupFile" accept=".db,.sqlite,.sqlite3" OnChange="SelectBackup" />
+    </div>
+
+    @if (SelectedBackup is not null)
+    {
+        <p class="backup-file-name">Vald fil: @SelectedBackup.Name</p>
+    }
+
+    <label class="work-event-toggle">
+        <input type="checkbox" @bind="ConfirmRestore" />
+        <span>
+            <strong>Jag förstår att nuvarande kalenderdata ersätts.</strong>
+            <small>Filen kontrolleras innan den återställs. Vid fel försöker appen behålla nuvarande databas.</small>
+        </span>
+    </label>
+
+    @if (!string.IsNullOrEmpty(ErrorMessage))
+    {
+        <p class="validation-message" role="alert">@ErrorMessage</p>
+    }
+    @if (!string.IsNullOrEmpty(SuccessMessage))
+    {
+        <p class="backup-success" role="status">@SuccessMessage</p>
+    }
+
+    <div class="event-actions">
+        <button type="button"
+                class="save-btn delete-btn"
+                disabled="@(SelectedBackup is null || !ConfirmRestore || IsRestoring)"
+                @onclick="Restore">
+            @(IsRestoring ? "Återställer..." : "Återställ databas")
+        </button>
+        <button type="button" class="save-btn secondary-btn" disabled="@IsRestoring" @onclick="Close">Stäng</button>
+    </div>
+</BaseModal>
+
+@code {
+    private const long MaxBackupSize = 50 * 1024 * 1024;
+
+    [Inject]
+    private SqliteDatabaseBackupService BackupService { get; set; } = default!;
+
+    [Inject]
+    private ILogger<DatabaseBackupModal> Logger { get; set; } = default!;
+
+    [Parameter]
+    public bool IsOpen { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    [Parameter]
+    public EventCallback OnRestored { get; set; }
+
+    private IBrowserFile? SelectedBackup;
+    private bool ConfirmRestore;
+    private bool IsRestoring;
+    private bool WasOpen;
+    private string? ErrorMessage;
+    private string? SuccessMessage;
+
+    protected override void OnParametersSet()
+    {
+        if (IsOpen && !WasOpen)
+        {
+            SelectedBackup = null;
+            ConfirmRestore = false;
+            ErrorMessage = null;
+            SuccessMessage = null;
+        }
+
+        WasOpen = IsOpen;
+    }
+
+    private void SelectBackup(InputFileChangeEventArgs args)
+    {
+        ErrorMessage = null;
+        SuccessMessage = null;
+        var file = args.File;
+        if (file.Size <= 0 || file.Size > MaxBackupSize)
+        {
+            SelectedBackup = null;
+            ErrorMessage = "Välj en fil som är större än 0 byte och högst 50 MB.";
+            return;
+        }
+
+        SelectedBackup = file;
+    }
+
+    private async Task Restore()
+    {
+        if (IsRestoring || SelectedBackup is null || !ConfirmRestore)
+        {
+            return;
+        }
+
+        IsRestoring = true;
+        ErrorMessage = null;
+        SuccessMessage = null;
+        try
+        {
+            await using var stream = SelectedBackup.OpenReadStream(MaxBackupSize);
+            await BackupService.RestoreAsync(stream);
+            await OnRestored.InvokeAsync();
+            SelectedBackup = null;
+            ConfirmRestore = false;
+            SuccessMessage = "Kalendern har återställts från säkerhetskopian.";
+        }
+        catch (DatabaseBackupException exception)
+        {
+            ErrorMessage = exception.Message;
+        }
+        catch (IOException exception)
+        {
+            Logger.LogWarning(exception, "Could not read the selected FamilyHub backup file.");
+            ErrorMessage = "Säkerhetskopian kunde inte läsas. Välj filen igen och försök på nytt.";
+        }
+        finally
+        {
+            IsRestoring = false;
+        }
+    }
+
+    private async Task Close()
+    {
+        if (!IsRestoring)
+        {
+            await OnClose.InvokeAsync();
+        }
+    }
+}
