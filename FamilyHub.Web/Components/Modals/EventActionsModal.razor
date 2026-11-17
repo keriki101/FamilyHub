@@ -1,4 +1,5 @@
 @using System.Globalization
+@using FamilyHub.Web.Services
 
 <BaseModal IsOpen="@IsOpen" OnClose="Close">
     @if (Event is not null)
@@ -14,15 +15,25 @@
             <div class="event-actions">
                 @if (Event.RecurrenceSeriesId is not null)
                 {
-                    <button type="button" class="save-btn delete-btn" @onclick="Delete">Ta bort detta tillfälle</button>
-                    <button type="button" class="save-btn delete-btn" @onclick="DeleteSeries">Ta bort hela serien</button>
+                    <button type="button" class="save-btn delete-btn" disabled="@IsDeleting" @onclick="Delete">
+                        @(IsDeleting ? "Sparar..." : "Ta bort detta tillfälle")
+                    </button>
+                    <button type="button" class="save-btn delete-btn" disabled="@IsDeleting" @onclick="DeleteSeries">
+                        @(IsDeleting ? "Sparar..." : "Ta bort hela serien")
+                    </button>
                 }
                 else
                 {
-                    <button type="button" class="save-btn delete-btn" @onclick="Delete">Ta bort</button>
+                    <button type="button" class="save-btn delete-btn" disabled="@IsDeleting" @onclick="Delete">
+                        @(IsDeleting ? "Sparar..." : "Ta bort")
+                    </button>
                 }
-                <button type="button" class="save-btn secondary-btn" @onclick="() => ConfirmingDelete = false">Avbryt</button>
+                <button type="button" class="save-btn secondary-btn" disabled="@IsDeleting" @onclick="() => ConfirmingDelete = false">Avbryt</button>
             </div>
+            @if (!string.IsNullOrEmpty(DeleteError))
+            {
+                <p class="validation-message" role="alert">@DeleteError</p>
+            }
         }
         else
         {
@@ -38,7 +49,7 @@
                     <button type="button" class="save-btn" @onclick="Edit">Redigera</button>
                 }
                 <button type="button" class="save-btn secondary-btn" @onclick="Duplicate">Duplicera</button>
-                <button type="button" class="save-btn delete-btn" @onclick="() => ConfirmingDelete = true">Ta bort</button>
+                <button type="button" class="save-btn delete-btn" @onclick="BeginDeleteConfirmation">Ta bort</button>
             </div>
         }
     }
@@ -61,16 +72,18 @@
     public EventCallback OnDuplicate { get; set; }
 
     [Parameter]
-    public EventCallback OnDelete { get; set; }
+    public Func<Task<SaveOperationResult>> OnDelete { get; set; } = default!;
 
     [Parameter]
     public EventCallback OnEditSeries { get; set; }
 
     [Parameter]
-    public EventCallback OnDeleteSeries { get; set; }
+    public Func<Task<SaveOperationResult>> OnDeleteSeries { get; set; } = default!;
 
     private static readonly CultureInfo SwedishCulture = CultureInfo.GetCultureInfo("sv-SE");
     private bool ConfirmingDelete;
+    private bool IsDeleting;
+    private string? DeleteError;
 
     private async Task Edit()
     {
@@ -92,19 +105,56 @@
 
     private async Task Delete()
     {
-        ConfirmingDelete = false;
-        await OnDelete.InvokeAsync();
+        await DeleteAsync(OnDelete);
     }
 
     private async Task DeleteSeries()
     {
-        ConfirmingDelete = false;
-        await OnDeleteSeries.InvokeAsync();
+        await DeleteAsync(OnDeleteSeries);
     }
 
     private async Task Close()
     {
+        if (IsDeleting)
+        {
+            return;
+        }
+
         ConfirmingDelete = false;
+        DeleteError = null;
         await OnClose.InvokeAsync();
+    }
+
+    private async Task DeleteAsync(Func<Task<SaveOperationResult>> delete)
+    {
+        if (IsDeleting)
+        {
+            return;
+        }
+
+        IsDeleting = true;
+        DeleteError = null;
+        try
+        {
+            var result = await delete();
+            if (result.Succeeded)
+            {
+                ConfirmingDelete = false;
+            }
+            else
+            {
+                DeleteError = result.ErrorMessage;
+            }
+        }
+        finally
+        {
+            IsDeleting = false;
+        }
+    }
+
+    private void BeginDeleteConfirmation()
+    {
+        DeleteError = null;
+        ConfirmingDelete = true;
     }
 }

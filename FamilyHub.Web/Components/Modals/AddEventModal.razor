@@ -96,8 +96,9 @@
     }
 
     <button class="save-btn"
+            disabled="@IsSaving"
             @onclick="Save">
-        @(IsSeriesEdit ? "Spara hela serien" : "Spara event")
+        @(IsSaving ? "Sparar..." : IsSeriesEdit ? "Spara hela serien" : "Spara event")
     </button>
 
 </BaseModal>
@@ -116,7 +117,7 @@
     public EventCallback OnClose { get; set; }
 
     [Parameter]
-    public EventCallback<List<Event>> OnSave { get; set; }
+    public Func<List<Event>, Task<SaveOperationResult>> OnSave { get; set; } = default!;
 
     [Parameter]
     public DateTime InitialDate { get; set; } = DateTime.Today;
@@ -141,6 +142,7 @@
     private bool RepeatWeekly;
     private bool IsWorkEvent;
     private string? ValidationError;
+    private bool IsSaving;
     private static readonly CultureInfo SwedishCulture = CultureInfo.GetCultureInfo("sv-SE");
     private Guid? LoadedEventId;
     private bool WasOpen;
@@ -193,6 +195,11 @@
 
     private async Task Save()
     {
+        if (IsSaving)
+        {
+            return;
+        }
+
         var title = Title.Trim();
         if (string.IsNullOrWhiteSpace(title))
         {
@@ -273,10 +280,25 @@
             });
         }
 
-        await OnSave.InvokeAsync(eventsToSave);
+        ValidationError = null;
+        IsSaving = true;
+        SaveOperationResult result;
+        try
+        {
+            result = await OnSave(eventsToSave);
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+
+        if (!result.Succeeded)
+        {
+            ValidationError = result.ErrorMessage;
+            return;
+        }
 
         Title = "";
-        ValidationError = null;
         LoadedEventId = null;
         RepeatWeekly = false;
         await Close();
@@ -298,6 +320,11 @@
 
     private async Task Close()
     {
+        if (IsSaving)
+        {
+            return;
+        }
+
         await OnClose.InvokeAsync();
     }
 }

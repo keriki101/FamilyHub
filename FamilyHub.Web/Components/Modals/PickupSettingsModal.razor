@@ -1,3 +1,5 @@
+@using FamilyHub.Web.Services
+
 <BaseModal IsOpen="@IsOpen" OnClose="Close">
     <div class="modal-header">
         <h2>Hämtning på förskolan</h2>
@@ -41,8 +43,10 @@
     }
 
     <div class="event-actions">
-        <button type="button" class="save-btn" disabled="@(People.Count < 2)" @onclick="Save">Spara</button>
-        <button type="button" class="save-btn secondary-btn" @onclick="Close">Avbryt</button>
+        <button type="button" class="save-btn" disabled="@(People.Count < 2 || IsSaving)" @onclick="Save">
+            @(IsSaving ? "Sparar..." : "Spara")
+        </button>
+        <button type="button" class="save-btn secondary-btn" disabled="@IsSaving" @onclick="Close">Avbryt</button>
     </div>
 </BaseModal>
 
@@ -60,12 +64,13 @@
     public EventCallback OnClose { get; set; }
 
     [Parameter]
-    public EventCallback<FamilyHubSettings> OnSave { get; set; }
+    public Func<FamilyHubSettings, Task<SaveOperationResult>> OnSave { get; set; } = default!;
 
     private Guid? FirstPersonId;
     private Guid? SecondPersonId;
     private string? ValidationError;
     private bool WasOpen;
+    private bool IsSaving;
 
     protected override void OnParametersSet()
     {
@@ -81,6 +86,11 @@
 
     private async Task Save()
     {
+        if (IsSaving)
+        {
+            return;
+        }
+
         if (FirstPersonId is not Guid firstId
             || SecondPersonId is not Guid secondId
             || firstId == secondId)
@@ -89,16 +99,40 @@
             return;
         }
 
-        await OnSave.InvokeAsync(new FamilyHubSettings
+        if (People.All(person => person.Id != firstId) || People.All(person => person.Id != secondId))
         {
-            Id = 1,
-            PickupPersonOneId = firstId,
-            PickupPersonTwoId = secondId
-        });
+            ValidationError = "En vald person finns inte längre. Uppdatera sidan och försök igen.";
+            return;
+        }
+
+        ValidationError = null;
+        IsSaving = true;
+        try
+        {
+            var result = await OnSave(new FamilyHubSettings
+            {
+                Id = 1,
+                PickupPersonOneId = firstId,
+                PickupPersonTwoId = secondId
+            });
+            if (!result.Succeeded)
+            {
+                ValidationError = result.ErrorMessage;
+            }
+        }
+        finally
+        {
+            IsSaving = false;
+        }
     }
 
     private async Task Close()
     {
+        if (IsSaving)
+        {
+            return;
+        }
+
         await OnClose.InvokeAsync();
     }
 }

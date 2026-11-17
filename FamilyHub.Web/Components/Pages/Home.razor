@@ -243,9 +243,15 @@
                 <button type="button" class="close-btn" aria-label="Stäng" @onclick="CancelDeletePerson">✕</button>
             </div>
             <p>Personen och alla personens event tas bort permanent.</p>
+            @if (!string.IsNullOrEmpty(PersonDeleteError))
+            {
+                <p class="validation-message" role="alert">@PersonDeleteError</p>
+            }
             <div class="event-actions">
-                <button type="button" class="save-btn delete-btn" @onclick="DeletePerson">Ta bort person</button>
-                <button type="button" class="save-btn secondary-btn" @onclick="CancelDeletePerson">Avbryt</button>
+                <button type="button" class="save-btn delete-btn" disabled="@IsDeletingPerson" @onclick="DeletePerson">
+                    @(IsDeletingPerson ? "Sparar..." : "Ta bort person")
+                </button>
+                <button type="button" class="save-btn secondary-btn" disabled="@IsDeletingPerson" @onclick="CancelDeletePerson">Avbryt</button>
             </div>
         }
     </BaseModal>
@@ -267,6 +273,8 @@
     private Event? EventToDuplicate;
     private Person? PersonBeingEdited;
     private Person? PersonToDelete;
+    private string? PersonDeleteError;
+    private bool IsDeletingPerson;
     private readonly CancellationTokenSource RefreshCancellation = new();
     private Task? ClockRefreshTask;
     private Task? CalendarRefreshTask;
@@ -424,23 +432,32 @@
         RefreshCancellation.Dispose();
     }
 
-    private async Task SavePerson(Person person)
+    private async Task<SaveOperationResult> SavePerson(Person person)
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        if (PersonBeingEdited is null)
+        var result = await SaveOperationResult.TrySaveAsync(async () =>
         {
-            db.People.Add(person);
-        }
-        else
+            await using var db = await DbFactory.CreateDbContextAsync();
+            if (PersonBeingEdited is null)
+            {
+                db.People.Add(person);
+            }
+            else
+            {
+                db.People.Update(person);
+            }
+
+            await db.SaveChangesAsync();
+        }, Logger, "family member");
+        if (!result.Succeeded)
         {
-            db.People.Update(person);
-            DefaultPeople.RemoveAll(existingPerson => existingPerson.Id == person.Id);
+            return result;
         }
 
-        await db.SaveChangesAsync();
+        DefaultPeople.RemoveAll(existingPerson => existingPerson.Id == person.Id);
         DefaultPeople.Add(person);
         LocalDataVersion++;
         PersonBeingEdited = null;
+        return result;
     }
 
     private void EditPerson(Person person)
@@ -456,11 +473,21 @@
         return Task.CompletedTask;
     }
 
-    private void AskDeletePerson(Person person) => PersonToDelete = person;
+    private void AskDeletePerson(Person person)
+    {
+        PersonToDelete = person;
+        PersonDeleteError = null;
+    }
 
     private Task CancelDeletePerson()
     {
+        if (IsDeletingPerson)
+        {
+            return Task.CompletedTask;
+        }
+
         PersonToDelete = null;
+        PersonDeleteError = null;
         return Task.CompletedTask;
     }
 
@@ -471,38 +498,71 @@
             return;
         }
 
+        if (IsDeletingPerson)
+        {
+            return;
+        }
+
         var personId = PersonToDelete.Id;
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var pickupSettings = await db.Settings.SingleOrDefaultAsync(item => item.Id == 1);
-        if (pickupSettings?.PickupPersonOneId == personId)
+        FamilyHubSettings? pickupSettings = null;
+        IsDeletingPerson = true;
+        PersonDeleteError = null;
+        try
         {
-            pickupSettings.PickupPersonOneId = null;
-        }
+            var result = await SaveOperationResult.TrySaveAsync(async () =>
+            {
+                await using var db = await DbFactory.CreateDbContextAsync();
+                pickupSettings = await db.Settings.SingleOrDefaultAsync(item => item.Id == 1);
+                if (pickupSettings?.PickupPersonOneId == personId)
+                {
+                    pickupSettings.PickupPersonOneId = null;
+                }
 
-        if (pickupSettings?.PickupPersonTwoId == personId)
+                if (pickupSettings?.PickupPersonTwoId == personId)
+                {
+                    pickupSettings.PickupPersonTwoId = null;
+                }
+
+                db.People.Remove(new Person { Id = personId });
+                await db.SaveChangesAsync();
+            }, Logger, "family member deletion");
+            if (!result.Succeeded)
+            {
+                PersonDeleteError = result.ErrorMessage;
+                return;
+            }
+
+            PickupSettings = pickupSettings ?? PickupSettings;
+            DefaultPeople.RemoveAll(person => person.Id == personId);
+            DefaultEvents.RemoveAll(calendarEvent => calendarEvent.PersonId == personId);
+            if (SelectedPersonId == personId)
+            {
+                SelectedPersonId = null;
+            }
+
+            LocalDataVersion++;
+            PersonToDelete = null;
+            PersonDeleteError = null;
+        }
+        finally
         {
-            pickupSettings.PickupPersonTwoId = null;
+            IsDeletingPerson = false;
         }
-
-        db.People.Remove(new Person { Id = personId });
-        await db.SaveChangesAsync();
-        PickupSettings = pickupSettings ?? PickupSettings;
-        DefaultPeople.RemoveAll(person => person.Id == personId);
-        DefaultEvents.RemoveAll(calendarEvent => calendarEvent.PersonId == personId);
-        if (SelectedPersonId == personId)
-        {
-            SelectedPersonId = null;
-        }
-
-        LocalDataVersion++;
-        PersonToDelete = null;
     }
 
-    private async Task SaveEvents(List<Event> eventsToSave)
+    private async Task<SaveOperationResult> SaveEvents(List<Event> eventsToSave)
     {
         if (IsSeriesEdit && EventBeingEdited?.RecurrenceSeriesId is Guid seriesId)
         {
-            await CalendarDataService.SaveSeriesAsync(seriesId, eventsToSave, CalendarService);
+            var result = await SaveOperationResult.TrySaveAsync(
+                () => CalendarDataService.SaveSeriesAsync(seriesId, eventsToSave, CalendarService),
+                Logger,
+                "recurring event series");
+            if (!result.Succeeded)
+            {
+                return result;
+            }
+
             var snapshot = await CalendarDataService.LoadAsync(RefreshCancellation.Token);
             DefaultPeople = snapshot.People;
             DefaultEvents = snapshot.Events;
@@ -510,7 +570,15 @@
         else if (EventBeingEdited is not null)
         {
             var updatedEvent = eventsToSave.Single();
-            await CalendarDataService.UpdateOccurrenceAsync(updatedEvent);
+            var result = await SaveOperationResult.TrySaveAsync(
+                () => CalendarDataService.UpdateOccurrenceAsync(updatedEvent),
+                Logger,
+                "calendar event");
+            if (!result.Succeeded)
+            {
+                return result;
+            }
+
             DefaultEvents.RemoveAll(existingEvent => existingEvent.Id == updatedEvent.Id);
             if (!updatedEvent.RecurrenceIsDeleted)
             {
@@ -519,9 +587,17 @@
         }
         else
         {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            db.Events.AddRange(eventsToSave);
-            await db.SaveChangesAsync();
+            var result = await SaveOperationResult.TrySaveAsync(async () =>
+            {
+                await using var db = await DbFactory.CreateDbContextAsync();
+                db.Events.AddRange(eventsToSave);
+                await db.SaveChangesAsync();
+            }, Logger, "calendar events");
+            if (!result.Succeeded)
+            {
+                return result;
+            }
+
             DefaultEvents.AddRange(eventsToSave);
         }
 
@@ -532,6 +608,7 @@
         IsSeriesEdit = false;
         SelectedDate = calendarEvent.Start.Date;
         WeekStart = CalendarWeek.GetStart(calendarEvent.Start.Date);
+        return SaveOperationResult.Success;
     }
 
     private Task CloseAddEventModal()
@@ -549,12 +626,40 @@
         return Task.CompletedTask;
     }
 
-    private async Task SavePickupSettings(FamilyHubSettings settings)
+    private async Task<SaveOperationResult> SavePickupSettings(FamilyHubSettings settings)
     {
-        await CalendarDataService.SaveSettingsAsync(settings);
+        if (settings.PickupPersonOneId is not Guid firstId
+            || settings.PickupPersonTwoId is not Guid secondId
+            || firstId == secondId
+            || DefaultPeople.All(person => person.Id != firstId)
+            || DefaultPeople.All(person => person.Id != secondId))
+        {
+            return SaveOperationResult.Failure("Välj två olika personer som fortfarande finns i familjen.");
+        }
+
+        SaveOperationResult result;
+        try
+        {
+            result = await SaveOperationResult.TrySaveAsync(
+                () => CalendarDataService.SaveSettingsAsync(settings),
+                Logger,
+                "preschool pickup settings");
+        }
+        catch (ArgumentException exception)
+        {
+            Logger.LogWarning(exception, "Pickup settings referenced a family member that no longer exists.");
+            return SaveOperationResult.Failure("En vald person finns inte längre. Uppdatera sidan och välj personerna igen.");
+        }
+
+        if (!result.Succeeded)
+        {
+            return result;
+        }
+
         PickupSettings = settings;
         LocalDataVersion++;
         ShowPickupSettingsModal = false;
+        return result;
     }
 
     private void ChangeWeek(int weeks) => WeekStart = CalendarWeek.Shift(WeekStart, weeks);
@@ -598,32 +703,51 @@
         ShowAddEventModal = true;
     }
 
-    private async Task DeleteSelectedEvent()
+    private async Task<SaveOperationResult> DeleteSelectedEvent()
     {
         if (SelectedEvent is null)
         {
-            return;
+            return SaveOperationResult.Failure("Välj ett event och försök igen.");
         }
 
-        await CalendarDataService.DeleteOccurrenceAsync(SelectedEvent);
-        DefaultEvents.RemoveAll(calendarEvent => calendarEvent.Id == SelectedEvent.Id);
+        var selectedEventId = SelectedEvent.Id;
+        var result = await SaveOperationResult.TrySaveAsync(
+            () => CalendarDataService.DeleteOccurrenceAsync(SelectedEvent),
+            Logger,
+            "calendar event deletion");
+        if (!result.Succeeded)
+        {
+            return result;
+        }
+
+        DefaultEvents.RemoveAll(calendarEvent => calendarEvent.Id == selectedEventId);
         LocalDataVersion++;
         SelectedEvent = null;
         ShowEventActionsModal = false;
+        return result;
     }
 
-    private async Task DeleteSelectedSeries()
+    private async Task<SaveOperationResult> DeleteSelectedSeries()
     {
         if (SelectedEvent?.RecurrenceSeriesId is not Guid seriesId)
         {
-            return;
+            return SaveOperationResult.Failure("Den återkommande serien kunde inte hittas.");
         }
 
-        await CalendarDataService.DeleteSeriesAsync(seriesId);
+        var result = await SaveOperationResult.TrySaveAsync(
+            () => CalendarDataService.DeleteSeriesAsync(seriesId),
+            Logger,
+            "recurring event series deletion");
+        if (!result.Succeeded)
+        {
+            return result;
+        }
+
         DefaultEvents.RemoveAll(calendarEvent => calendarEvent.RecurrenceSeriesId == seriesId);
         LocalDataVersion++;
         SelectedEvent = null;
         ShowEventActionsModal = false;
+        return result;
     }
 
     private string GetEventStyle(Event calendarEvent, List<Event> dayEvents)

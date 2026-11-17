@@ -1,3 +1,5 @@
+@using FamilyHub.Web.Services
+
 <BaseModal IsOpen="@IsOpen" OnClose="Close">
 
     <div class="modal-header">
@@ -29,7 +31,9 @@
         <p class="validation-message" role="alert">@ValidationError</p>
     }
 
-    <button class="save-btn" @onclick="Save">@(EditPerson is null ? "Spara person" : "Spara ändringar")</button>
+    <button class="save-btn" disabled="@IsSaving" @onclick="Save">
+        @(IsSaving ? "Sparar..." : EditPerson is null ? "Spara person" : "Spara ändringar")
+    </button>
 
 </BaseModal>
 
@@ -42,13 +46,14 @@
     public EventCallback OnClose { get; set; }
 
     [Parameter]
-    public EventCallback<Person> OnSave { get; set; }
+    public Func<Person, Task<SaveOperationResult>> OnSave { get; set; } = default!;
 
     [Parameter]
     public Person? EditPerson { get; set; }
 
     private string Name = "";
     private string? ValidationError;
+    private bool IsSaving;
 
     private string SelectedColor = "#5E8B7E";
     private Guid? LoadedPersonId;
@@ -83,6 +88,11 @@
 
     private async Task Save()
     {
+        if (IsSaving)
+        {
+            return;
+        }
+
         var name = Name.Trim();
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -90,21 +100,41 @@
             return;
         }
 
-        await OnSave.InvokeAsync(new Person
+        ValidationError = null;
+        IsSaving = true;
+        SaveOperationResult result;
+        try
         {
-            Id = EditPerson?.Id ?? Guid.NewGuid(),
-            Name = name,
-            Color = SelectedColor
-        });
+            result = await OnSave(new Person
+            {
+                Id = EditPerson?.Id ?? Guid.NewGuid(),
+                Name = name,
+                Color = SelectedColor
+            });
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+
+        if (!result.Succeeded)
+        {
+            ValidationError = result.ErrorMessage;
+            return;
+        }
 
         Name = "";
-        ValidationError = null;
         LoadedPersonId = null;
         await Close();
     }
 
     private async Task Close()
     {
+        if (IsSaving)
+        {
+            return;
+        }
+
         await OnClose.InvokeAsync();
     }
 }

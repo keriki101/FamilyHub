@@ -106,7 +106,7 @@ Run the automated unit tests from the repository root:
 dotnet test FamilyHub.Web.Tests/FamilyHub.Web.Tests.csproj
 ```
 
-The xUnit test project uses Moq to control the calendar clock and covers preschool pickup decisions, recurring-event occurrence generation, salted password-hash validation, and authentication-session expiration.
+The xUnit test project uses Moq to control the calendar clock and covers preschool pickup decisions, recurring-event occurrence generation and exceptions, persistence failures, salted password-hash validation, and authentication-session expiration.
 
 ## GitHub
 
