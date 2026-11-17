@@ -12,4 +12,5 @@
         public DateTime? RecurrenceOccurrenceDate { get; set; }
         public bool RecurrenceIsOverride { get; set; }
         public bool RecurrenceIsDeleted { get; set; }
+        public bool IsWorkEvent { get; set; }
     }

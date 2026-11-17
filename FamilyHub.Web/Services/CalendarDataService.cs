@@ -17,8 +17,47 @@ public sealed class CalendarDataService(IDbContextFactory<FamilyHubDbContext> db
             .Where(calendarEvent => !calendarEvent.RecurrenceIsDeleted)
             .OrderBy(calendarEvent => calendarEvent.Start)
             .ToListAsync(cancellationToken);
+        var settings = await db.Settings
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == 1, cancellationToken)
+            ?? new FamilyHubSettings();
 
-        return new CalendarSnapshot(people, events);
+        return new CalendarSnapshot(people, events, settings);
+    }
+
+    public async Task SaveSettingsAsync(
+        FamilyHubSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        if (settings.PickupPersonOneId is not Guid firstId
+            || settings.PickupPersonTwoId is not Guid secondId
+            || firstId == secondId)
+        {
+            throw new ArgumentException("Choose two different pickup people.", nameof(settings));
+        }
+
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var peopleCount = await db.People.CountAsync(
+            person => person.Id == firstId || person.Id == secondId,
+            cancellationToken);
+        if (peopleCount != 2)
+        {
+            throw new ArgumentException("Both pickup people must exist in the family list.", nameof(settings));
+        }
+
+        var current = await db.Settings.SingleOrDefaultAsync(item => item.Id == 1, cancellationToken);
+        if (current is null)
+        {
+            settings.Id = 1;
+            db.Settings.Add(settings);
+        }
+        else
+        {
+            current.PickupPersonOneId = firstId;
+            current.PickupPersonTwoId = secondId;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     public async Task UpdateOccurrenceAsync(Event updatedEvent, CancellationToken cancellationToken = default)
@@ -94,4 +133,5 @@ public sealed class CalendarDataService(IDbContextFactory<FamilyHubDbContext> db
         db.Events.RemoveRange(occurrences);
         await db.SaveChangesAsync(cancellationToken);
     }
+
 }

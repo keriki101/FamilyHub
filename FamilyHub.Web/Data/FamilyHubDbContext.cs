@@ -7,6 +7,7 @@ public sealed class FamilyHubDbContext(DbContextOptions<FamilyHubDbContext> opti
 {
     public DbSet<Person> People => Set<Person>();
     public DbSet<Event> Events => Set<Event>();
+    public DbSet<FamilyHubSettings> Settings => Set<FamilyHubSettings>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -212,6 +212,34 @@ a,
     outline: 3px solid rgb(111 157 132 / 18%);
 }
 
+.work-event-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 0 0 18px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface-muted);
+}
+
+.work-event-toggle input {
+    width: 20px;
+    height: 20px;
+    margin-top: 2px;
+    accent-color: var(--accent);
+}
+
+.work-event-toggle span {
+    display: grid;
+    gap: 4px;
+}
+
+.work-event-toggle small {
+    color: var(--ink-muted);
+    line-height: 1.4;
+}
+
 .recurrence-options {
     min-width: 0;
     margin: 0 0 18px;

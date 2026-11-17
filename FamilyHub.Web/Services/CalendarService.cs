@@ -11,37 +11,49 @@ public sealed record PreschoolPickup(PreschoolPickupStatus Status, Person? Perso
 
 public sealed class CalendarService(ICalendarClock clock)
 {
-    public PreschoolPickup GetPreschoolPickup(IEnumerable<Person> people, IEnumerable<Event> events)
+    public PreschoolPickup GetPreschoolPickup(
+        IEnumerable<Person> people,
+        IEnumerable<Event> events,
+        Guid? firstPersonId,
+        Guid? secondPersonId)
     {
-        var mamma = people.FirstOrDefault(person =>
-            string.Equals(person.Name.Trim(), "Mamma", StringComparison.OrdinalIgnoreCase));
-        var pappa = people.FirstOrDefault(person =>
-            string.Equals(person.Name.Trim(), "Pappa", StringComparison.OrdinalIgnoreCase));
-        if (mamma is null || pappa is null)
+        if (firstPersonId is not Guid firstId
+            || secondPersonId is not Guid secondId
+            || firstId == secondId)
+        {
+            return new(PreschoolPickupStatus.NoSharedWorkday, null, null);
+        }
+
+        var eligiblePeople = people
+            .Where(person => person.Id == firstId || person.Id == secondId)
+            .ToDictionary(person => person.Id);
+        if (!eligiblePeople.TryGetValue(firstId, out var firstPerson)
+            || !eligiblePeople.TryGetValue(secondId, out var secondPerson))
         {
             return new(PreschoolPickupStatus.NoSharedWorkday, null, null);
         }
 
         var jobEnds = events
             .Where(calendarEvent => calendarEvent.Start.Date == clock.Now.Date
-                && string.Equals(calendarEvent.Title.Trim(), "jobb", StringComparison.OrdinalIgnoreCase))
+                && calendarEvent.IsWorkEvent
+                && (calendarEvent.PersonId == firstId || calendarEvent.PersonId == secondId))
             .GroupBy(calendarEvent => calendarEvent.PersonId)
             .ToDictionary(group => group.Key, group => group.Max(calendarEvent => calendarEvent.End));
 
-        if (!jobEnds.TryGetValue(mamma.Id, out var mammaEnd)
-            || !jobEnds.TryGetValue(pappa.Id, out var pappaEnd))
+        if (!jobEnds.TryGetValue(firstId, out var firstEnd)
+            || !jobEnds.TryGetValue(secondId, out var secondEnd))
         {
             return new(PreschoolPickupStatus.NoSharedWorkday, null, null);
         }
 
-        if (mammaEnd == pappaEnd)
+        if (firstEnd == secondEnd)
         {
-            return new(PreschoolPickupStatus.SameEndTime, null, mammaEnd);
+            return new(PreschoolPickupStatus.SameEndTime, null, firstEnd);
         }
 
-        return mammaEnd < pappaEnd
-            ? new(PreschoolPickupStatus.Assigned, mamma, mammaEnd)
-            : new(PreschoolPickupStatus.Assigned, pappa, pappaEnd);
+        return firstEnd < secondEnd
+            ? new(PreschoolPickupStatus.Assigned, firstPerson, firstEnd)
+            : new(PreschoolPickupStatus.Assigned, secondPerson, secondEnd);
     }
 
     public List<Event> CreateWeeklyOccurrences(
@@ -52,7 +64,8 @@ public sealed class CalendarService(ICalendarClock clock)
         TimeOnly startTime,
         TimeOnly endTime,
         int recurrenceDays,
-        Guid? seriesId = null)
+        Guid? seriesId = null,
+        bool isWorkEvent = false)
     {
         if (endDate < startDate)
         {
@@ -89,7 +102,8 @@ public sealed class CalendarService(ICalendarClock clock)
                 RecurrenceStart = startDate.ToDateTime(TimeOnly.MinValue),
                 RecurrenceUntil = endDate.ToDateTime(TimeOnly.MinValue),
                 RecurrenceDays = recurrenceDays,
-                RecurrenceOccurrenceDate = date.ToDateTime(TimeOnly.MinValue)
+                RecurrenceOccurrenceDate = date.ToDateTime(TimeOnly.MinValue),
+                IsWorkEvent = isWorkEvent
             });
         }
 
@@ -132,7 +146,8 @@ public sealed class CalendarService(ICalendarClock clock)
                 RecurrenceDays = regenerated.RecurrenceDays,
                 RecurrenceOccurrenceDate = occurrenceDate,
                 RecurrenceIsOverride = existing.RecurrenceIsOverride,
-                RecurrenceIsDeleted = existing.RecurrenceIsDeleted
+                RecurrenceIsDeleted = existing.RecurrenceIsDeleted,
+                IsWorkEvent = existing.IsWorkEvent
             };
         }).ToList();
     }

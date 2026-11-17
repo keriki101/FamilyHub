@@ -30,6 +30,9 @@ namespace FamilyHub.Web.Migrations
                     b.Property<DateTime>("End")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("IsWorkEvent")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("RecurrenceDays")
                         .HasColumnType("INTEGER");
 
@@ -87,6 +90,23 @@ namespace FamilyHub.Web.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("People");
+                });
+
+            modelBuilder.Entity("FamilyHubSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("PickupPersonOneId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("PickupPersonTwoId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Settings");
                 });
 
             modelBuilder.Entity("Event", b =>

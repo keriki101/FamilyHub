@@ -26,6 +26,14 @@
         </select>
     </div>
 
+    <label class="work-event-toggle">
+        <input type="checkbox" @bind="IsWorkEvent" />
+        <span>
+            <strong>Arbetsevent</strong>
+            <small>Räknas vid beräkning av vem som hämtar på förskolan.</small>
+        </span>
+    </label>
+
     <div class="form-group">
         <label for="eventDate">Datum</label>
         <input id="eventDate" type="date" @bind="EventDate" />
@@ -131,6 +139,7 @@
     private DateOnly? RecurrenceUntil = DateOnly.FromDateTime(DateTime.Today.AddMonths(3));
     private int RecurrenceDays;
     private bool RepeatWeekly;
+    private bool IsWorkEvent;
     private string? ValidationError;
     private static readonly CultureInfo SwedishCulture = CultureInfo.GetCultureInfo("sv-SE");
     private Guid? LoadedEventId;
@@ -170,6 +179,7 @@
                 : DateOnly.FromDateTime((sourceEvent?.Start.Date ?? InitialDate.Date).AddMonths(3));
             RecurrenceDays = sourceEvent?.RecurrenceDays
                 ?? (1 << (int)(sourceEvent?.Start.DayOfWeek ?? InitialDate.DayOfWeek));
+            IsWorkEvent = sourceEvent?.IsWorkEvent ?? false;
             RepeatWeekly = EditEvent?.RecurrenceSeriesId is not null;
             ValidationError = null;
             LoadedEventId = sourceEvent?.Id;
@@ -240,7 +250,8 @@
                 start,
                 end,
                 RecurrenceDays,
-                EditEvent?.RecurrenceSeriesId);
+                EditEvent?.RecurrenceSeriesId,
+                IsWorkEvent);
         }
         else
         {
@@ -254,6 +265,7 @@
                 RecurrenceOccurrenceDate = EditEvent?.RecurrenceOccurrenceDate,
                 RecurrenceIsOverride = EditEvent?.RecurrenceIsOverride ?? false,
                 RecurrenceIsDeleted = false,
+                IsWorkEvent = IsWorkEvent,
                 PersonId = personId,
                 Title = title,
                 Start = date.ToDateTime(start),

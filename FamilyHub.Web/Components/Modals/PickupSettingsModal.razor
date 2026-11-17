@@ -1,0 +1,104 @@
+<BaseModal IsOpen="@IsOpen" OnClose="Close">
+    <div class="modal-header">
+        <h2>Hämtning på förskolan</h2>
+        <button type="button" class="close-btn" aria-label="Stäng" @onclick="Close">✕</button>
+    </div>
+
+    <p>Välj de två personer vars arbetsevent ska användas för att beräkna hämtning.</p>
+
+    @if (People.Count < 2)
+    {
+        <p class="validation-message" role="status">Lägg till minst två personer först.</p>
+    }
+    else
+    {
+        <div class="form-group">
+            <label for="pickupPersonOne">Första personen</label>
+            <select id="pickupPersonOne" @bind="FirstPersonId">
+                <option value="">Välj person</option>
+                @foreach (var person in People)
+                {
+                    <option value="@person.Id">@person.Name</option>
+                }
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="pickupPersonTwo">Andra personen</label>
+            <select id="pickupPersonTwo" @bind="SecondPersonId">
+                <option value="">Välj person</option>
+                @foreach (var person in People)
+                {
+                    <option value="@person.Id">@person.Name</option>
+                }
+            </select>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(ValidationError))
+    {
+        <p class="validation-message" role="alert">@ValidationError</p>
+    }
+
+    <div class="event-actions">
+        <button type="button" class="save-btn" disabled="@(People.Count < 2)" @onclick="Save">Spara</button>
+        <button type="button" class="save-btn secondary-btn" @onclick="Close">Avbryt</button>
+    </div>
+</BaseModal>
+
+@code {
+    [Parameter]
+    public bool IsOpen { get; set; }
+
+    [Parameter]
+    public List<Person> People { get; set; } = [];
+
+    [Parameter]
+    public FamilyHubSettings Settings { get; set; } = new();
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    [Parameter]
+    public EventCallback<FamilyHubSettings> OnSave { get; set; }
+
+    private Guid? FirstPersonId;
+    private Guid? SecondPersonId;
+    private string? ValidationError;
+    private bool WasOpen;
+
+    protected override void OnParametersSet()
+    {
+        if (IsOpen && !WasOpen)
+        {
+            FirstPersonId = Settings.PickupPersonOneId;
+            SecondPersonId = Settings.PickupPersonTwoId;
+            ValidationError = null;
+        }
+
+        WasOpen = IsOpen;
+    }
+
+    private async Task Save()
+    {
+        if (FirstPersonId is not Guid firstId
+            || SecondPersonId is not Guid secondId
+            || firstId == secondId)
+        {
+            ValidationError = "Välj två olika personer.";
+            return;
+        }
+
+        await OnSave.InvokeAsync(new FamilyHubSettings
+        {
+            Id = 1,
+            PickupPersonOneId = firstId,
+            PickupPersonTwoId = secondId
+        });
+    }
+
+    private async Task Close()
+    {
+        await OnClose.InvokeAsync();
+    }
+}

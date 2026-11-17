@@ -28,7 +28,7 @@ public sealed class RecurrenceExceptionTests
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"INSERT INTO People (Id, Name, Color) VALUES ({personId.ToString()}, {"Mamma"}, {"#123456"})");
         await db.Database.ExecuteSqlInterpolatedAsync(
-            $"INSERT INTO Events (Id, PersonId, Title, Start, End, Color, RecurrenceSeriesId, RecurrenceStart, RecurrenceUntil, RecurrenceDays) VALUES ({eventId.ToString()}, {personId.ToString()}, {"Fotboll"}, {start.ToString("yyyy-MM-dd HH:mm:ss")}, {start.AddHours(1).ToString("yyyy-MM-dd HH:mm:ss")}, {""}, {seriesId.ToString()}, {start.Date.ToString("yyyy-MM-dd HH:mm:ss")}, {start.Date.AddMonths(1).ToString("yyyy-MM-dd HH:mm:ss")}, {1 << (int)DayOfWeek.Thursday})");
+            $"INSERT INTO Events (Id, PersonId, Title, Start, End, Color, RecurrenceSeriesId, RecurrenceStart, RecurrenceUntil, RecurrenceDays) VALUES ({eventId.ToString()}, {personId.ToString()}, {"Jobb"}, {start.ToString("yyyy-MM-dd HH:mm:ss")}, {start.AddHours(1).ToString("yyyy-MM-dd HH:mm:ss")}, {""}, {seriesId.ToString()}, {start.Date.ToString("yyyy-MM-dd HH:mm:ss")}, {start.Date.AddMonths(1).ToString("yyyy-MM-dd HH:mm:ss")}, {1 << (int)DayOfWeek.Thursday})");
         var beforeMigration = await db.Database.SqlQueryRaw<long>("SELECT COUNT(*) AS Value FROM Events").SingleAsync();
         Assert.Equal(1, beforeMigration);
         await db.Database.MigrateAsync();
@@ -38,6 +38,7 @@ public sealed class RecurrenceExceptionTests
         Assert.Equal(start.Date, migrated.RecurrenceOccurrenceDate);
         Assert.False(migrated.RecurrenceIsOverride);
         Assert.False(migrated.RecurrenceIsDeleted);
+        Assert.True(migrated.IsWorkEvent);
     }
 
     [Fact]

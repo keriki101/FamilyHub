@@ -10,6 +10,39 @@ namespace FamilyHub.Web.Tests;
 public sealed class CalendarDataServiceTests
 {
     [Fact]
+    public async Task SaveSettingsAsync_PersistsPickupPeople()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var services = new ServiceCollection();
+        services.AddDbContextFactory<FamilyHubDbContext>(options => options.UseSqlite(connection));
+        await using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IDbContextFactory<FamilyHubDbContext>>();
+        var firstPerson = new Person { Id = Guid.NewGuid(), Name = "Alex", Color = "#123456" };
+        var secondPerson = new Person { Id = Guid.NewGuid(), Name = "Sam", Color = "#654321" };
+
+        await using (var setupDb = await factory.CreateDbContextAsync())
+        {
+            await setupDb.Database.EnsureCreatedAsync();
+            setupDb.People.AddRange(firstPerson, secondPerson);
+            await setupDb.SaveChangesAsync();
+        }
+
+        var settings = new FamilyHubSettings
+        {
+            PickupPersonOneId = firstPerson.Id,
+            PickupPersonTwoId = secondPerson.Id
+        };
+        var calendarData = new CalendarDataService(factory);
+
+        await calendarData.SaveSettingsAsync(settings);
+
+        var snapshot = await calendarData.LoadAsync();
+        Assert.Equal(firstPerson.Id, snapshot.Settings.PickupPersonOneId);
+        Assert.Equal(secondPerson.Id, snapshot.Settings.PickupPersonTwoId);
+    }
+
+    [Fact]
     public async Task LoadAsync_ReturnsPersistedChangesMadeByAnotherContext()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

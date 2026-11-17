@@ -94,8 +94,8 @@ await using (var scope = app.Services.CreateAsyncScope())
 
         db.People.AddRange(people);
         db.Events.AddRange(
-            new Event { Id = Guid.NewGuid(), PersonId = people[0].Id, Title = "Jobb", Start = DateTime.Today.AddHours(8), End = DateTime.Today.AddHours(16) },
-            new Event { Id = Guid.NewGuid(), PersonId = people[1].Id, Title = "Kontor", Start = DateTime.Today.AddHours(9), End = DateTime.Today.AddHours(17) },
+            new Event { Id = Guid.NewGuid(), PersonId = people[0].Id, Title = "Jobb", Start = DateTime.Today.AddHours(8), End = DateTime.Today.AddHours(16), IsWorkEvent = true },
+            new Event { Id = Guid.NewGuid(), PersonId = people[1].Id, Title = "Kontor", Start = DateTime.Today.AddHours(9), End = DateTime.Today.AddHours(17), IsWorkEvent = true },
             new Event { Id = Guid.NewGuid(), PersonId = people[2].Id, Title = "Möte", Start = DateTime.Today.AddDays(1).AddHours(10), End = DateTime.Today.AddDays(1).AddHours(11) });
         await db.SaveChangesAsync();
     }

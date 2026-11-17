@@ -27,7 +27,7 @@ public sealed class CalendarServiceTests
             CreateJob(pappa, Today.AddHours(9), Today.AddHours(17))
         };
 
-        var pickup = service.GetPreschoolPickup([mamma, pappa], events);
+        var pickup = GetPickup(mamma, pappa, events);
 
         Assert.Equal(PreschoolPickupStatus.Assigned, pickup.Status);
         Assert.Same(mamma, pickup.Person);
@@ -48,9 +48,9 @@ public sealed class CalendarServiceTests
             CreateJob(pappa, Today.AddDays(1).AddHours(9), Today.AddDays(1).AddHours(15))
         };
 
-        var todaysPickup = service.GetPreschoolPickup([mamma, pappa], events);
+        var todaysPickup = GetPickup(mamma, pappa, events);
         now = Today.AddDays(1);
-        var tomorrowsPickup = service.GetPreschoolPickup([mamma, pappa], events);
+        var tomorrowsPickup = GetPickup(mamma, pappa, events);
 
         Assert.Same(mamma, todaysPickup.Person);
         Assert.Same(pappa, tomorrowsPickup.Person);
@@ -66,7 +66,7 @@ public sealed class CalendarServiceTests
             CreateJob(pappa, Today.AddHours(9), Today.AddHours(15))
         };
 
-        var pickup = service.GetPreschoolPickup([mamma, pappa], events);
+        var pickup = GetPickup(mamma, pappa, events);
 
         Assert.Equal(PreschoolPickupStatus.Assigned, pickup.Status);
         Assert.Same(pappa, pickup.Person);
@@ -83,7 +83,7 @@ public sealed class CalendarServiceTests
             CreateJob(pappa, Today.AddHours(9), Today.AddHours(16))
         };
 
-        var pickup = service.GetPreschoolPickup([mamma, pappa], events);
+        var pickup = GetPickup(mamma, pappa, events);
 
         Assert.Equal(PreschoolPickupStatus.SameEndTime, pickup.Status);
         Assert.Null(pickup.Person);
@@ -108,7 +108,7 @@ public sealed class CalendarServiceTests
             events.Add(CreateJob(pappa, Today.AddHours(9), Today.AddHours(17)));
         }
 
-        var pickup = service.GetPreschoolPickup([mamma, pappa], events);
+        var pickup = GetPickup(mamma, pappa, events);
 
         Assert.Equal(PreschoolPickupStatus.NoSharedWorkday, pickup.Status);
         Assert.Null(pickup.Person);
@@ -123,10 +123,25 @@ public sealed class CalendarServiceTests
         {
             CreateJob(mamma, Today.AddDays(-1).AddHours(8), Today.AddDays(-1).AddHours(15)),
             CreateJob(pappa, Today.AddDays(1).AddHours(9), Today.AddDays(1).AddHours(17)),
-            new Event { PersonId = mamma.Id, Title = "Kontor", Start = Today.AddHours(8), End = Today.AddHours(12) }
+            new Event { PersonId = mamma.Id, Title = "Jobb", Start = Today.AddHours(8), End = Today.AddHours(12) }
         };
 
-        var pickup = service.GetPreschoolPickup([mamma, pappa], events);
+        var pickup = GetPickup(mamma, pappa, events);
+
+        Assert.Equal(PreschoolPickupStatus.NoSharedWorkday, pickup.Status);
+    }
+
+    [Fact]
+    public void GetPreschoolPickup_DoesNotTreatJobbTitleAsWorkClassification()
+    {
+        var (mamma, pappa) = CreateParents();
+        var events = new[]
+        {
+            new Event { PersonId = mamma.Id, Title = "Jobb", Start = Today.AddHours(8), End = Today.AddHours(15) },
+            new Event { PersonId = pappa.Id, Title = "Jobb", Start = Today.AddHours(9), End = Today.AddHours(17) }
+        };
+
+        var pickup = GetPickup(mamma, pappa, events);
 
         Assert.Equal(PreschoolPickupStatus.NoSharedWorkday, pickup.Status);
     }
@@ -142,7 +157,7 @@ public sealed class CalendarServiceTests
             CreateJob(pappa, Today.AddHours(9), Today.AddHours(17))
         };
 
-        var pickup = service.GetPreschoolPickup([mamma, pappa], events);
+        var pickup = GetPickup(mamma, pappa, events);
 
         Assert.Equal(PreschoolPickupStatus.Assigned, pickup.Status);
         Assert.Same(mamma, pickup.Person);
@@ -153,7 +168,7 @@ public sealed class CalendarServiceTests
     public void GetPreschoolPickup_ReturnsNoSharedWorkdayWhenEitherParentIsMissing()
     {
         var (mamma, _) = CreateParents();
-        var pickup = service.GetPreschoolPickup([mamma], []);
+        var pickup = service.GetPreschoolPickup([mamma], [], mamma.Id, Guid.NewGuid());
 
         Assert.Equal(PreschoolPickupStatus.NoSharedWorkday, pickup.Status);
     }
@@ -169,7 +184,11 @@ public sealed class CalendarServiceTests
             CreateJob(pappa, Today.AddHours(9), Today.AddHours(17))
         };
 
-        var pickup = service.GetPreschoolPickup([mamma, duplicateMamma, pappa], events);
+        var pickup = service.GetPreschoolPickup(
+            [mamma, duplicateMamma, pappa],
+            events,
+            mamma.Id,
+            pappa.Id);
 
         Assert.Equal(PreschoolPickupStatus.Assigned, pickup.Status);
         Assert.Same(mamma, pickup.Person);
@@ -225,6 +244,22 @@ public sealed class CalendarServiceTests
     }
 
     [Fact]
+    public void CreateWeeklyOccurrences_PreservesWorkEventClassification()
+    {
+        var occurrences = service.CreateWeeklyOccurrences(
+            "Kontor",
+            Guid.NewGuid(),
+            new DateOnly(2026, 10, 19),
+            new DateOnly(2026, 10, 19),
+            new TimeOnly(8, 0),
+            new TimeOnly(16, 0),
+            1 << (int)DayOfWeek.Monday,
+            isWorkEvent: true);
+
+        Assert.All(occurrences, occurrence => Assert.True(occurrence.IsWorkEvent));
+    }
+
+    [Fact]
     public void CreateWeeklyOccurrences_RejectsAnEndDateBeforeTheStartDate()
     {
         var exception = Assert.Throws<ArgumentException>(() => service.CreateWeeklyOccurrences(
@@ -254,12 +289,19 @@ public sealed class CalendarServiceTests
         Assert.Equal("recurrenceDays", exception.ParamName);
     }
 
-    private static (Person Mamma, Person Pappa) CreateParents() =>
-        (new Person { Id = Guid.NewGuid(), Name = " MAMMA " },
-         new Person { Id = Guid.NewGuid(), Name = "pappa" });
+    private PreschoolPickup GetPickup(Person firstPerson, Person secondPerson, IEnumerable<Event> events) =>
+        service.GetPreschoolPickup(
+            [firstPerson, secondPerson],
+            events,
+            firstPerson.Id,
+            secondPerson.Id);
 
     private static Event CreateJob(Person person, DateTime start, DateTime end) =>
-        new() { PersonId = person.Id, Title = " Jobb ", Start = start, End = end };
+        new() { PersonId = person.Id, Title = "Kontor", Start = start, End = end, IsWorkEvent = true };
+
+    private static (Person Mamma, Person Pappa) CreateParents() =>
+        (new Person { Id = Guid.NewGuid(), Name = "Alex" },
+         new Person { Id = Guid.NewGuid(), Name = "Sam" });
 
     private static void AssertOccurrence(Event occurrence, DateTime start, string title, Guid personId)
     {

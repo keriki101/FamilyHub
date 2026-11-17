@@ -119,6 +119,23 @@
     max-width: 100%;
 }
 
+.pickup-settings-button {
+    min-height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    color: var(--ink-muted);
+    background: var(--surface-muted);
+    font-size: 0.78rem;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.pickup-settings-button:hover {
+    color: var(--ink);
+    background: #eaf0ea;
+}
+
 .auth-logout {
     margin-top: 4px;
 }

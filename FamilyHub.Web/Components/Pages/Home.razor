@@ -49,12 +49,19 @@
             }
             else if (pickup.Status == PreschoolPickupStatus.SameEndTime)
             {
-                <span class="pickup-empty">Mamma och pappa slutar samtidigt</span>
+                <span class="pickup-empty">Slutar samtidigt</span>
+            }
+            else if (!PickupSettingsConfigured)
+            {
+                <span class="pickup-empty">Välj två personer för att beräkna hämtning</span>
             }
             else
             {
-                <span class="pickup-empty">Inget gemensamt jobb idag</span>
+                <span class="pickup-empty">Båda behöver ha ett arbetsevent idag</span>
             }
+            <button type="button" class="pickup-settings-button" @onclick="() => ShowPickupSettingsModal = true">
+                @(PickupSettingsConfigured ? "Ändra personer" : "Välj personer")
+            </button>
             <form method="post" action="/auth/logout" class="auth-logout">
                 <AntiforgeryToken />
                 <button type="submit">Logga ut</button>
@@ -211,6 +218,13 @@
         IsSeriesEdit="@IsSeriesEdit"
         OnSave="SaveEvents" />
 
+    <PickupSettingsModal
+        IsOpen="@ShowPickupSettingsModal"
+        People="@DefaultPeople"
+        Settings="@PickupSettings"
+        OnClose="ClosePickupSettingsModal"
+        OnSave="SavePickupSettings" />
+
     <EventActionsModal
         IsOpen="@ShowEventActionsModal"
         Event="@SelectedEvent"
@@ -242,6 +256,7 @@
     private bool ShowAddPersonModal;
     private bool ShowAddEventModal;
     private bool ShowEventActionsModal;
+    private bool ShowPickupSettingsModal;
     private bool IsSeriesEdit;
     private DateTime WeekStart;
     private DateTime CurrentTime;
@@ -264,12 +279,23 @@
     private int[] Hours = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
     private List<Person> DefaultPeople = [];
     private List<Event> DefaultEvents = [];
+    private FamilyHubSettings PickupSettings = new();
     private IEnumerable<Event> WeekEvents => DefaultEvents.Where(calendarEvent =>
         calendarEvent.Start.Date >= WeekStart
         && calendarEvent.Start.Date < WeekStart.AddDays(7));
     private IEnumerable<Event> EventsForCurrentWeek => WeekEvents.Where(calendarEvent =>
         SelectedPersonId is null || calendarEvent.PersonId == SelectedPersonId);
-    private PreschoolPickup PreschoolPickup => CalendarService.GetPreschoolPickup(DefaultPeople, DefaultEvents);
+    private bool PickupSettingsConfigured =>
+        PickupSettings.PickupPersonOneId is Guid firstId
+        && PickupSettings.PickupPersonTwoId is Guid secondId
+        && firstId != secondId
+        && DefaultPeople.Any(person => person.Id == firstId)
+        && DefaultPeople.Any(person => person.Id == secondId);
+    private PreschoolPickup PreschoolPickup => CalendarService.GetPreschoolPickup(
+        DefaultPeople,
+        DefaultEvents,
+        PickupSettings.PickupPersonOneId,
+        PickupSettings.PickupPersonTwoId);
 
     private List<Event> UpcomingEvents => DefaultEvents
         .Where(calendarEvent => calendarEvent.Start >= CurrentTime)
@@ -286,6 +312,7 @@
         var snapshot = await CalendarDataService.LoadAsync(RefreshCancellation.Token);
         DefaultPeople = snapshot.People;
         DefaultEvents = snapshot.Events;
+        PickupSettings = snapshot.Settings;
 
         ClockRefreshTask = RefreshClockAsync(RefreshCancellation.Token);
         CalendarRefreshTask = RefreshCalendarDataPeriodicallyAsync(RefreshCancellation.Token);
@@ -353,7 +380,8 @@
     }
 
     private bool HasOpenDialog =>
-        ShowAddPersonModal || ShowAddEventModal || ShowEventActionsModal || PersonToDelete is not null;
+        ShowAddPersonModal || ShowAddEventModal || ShowEventActionsModal
+        || ShowPickupSettingsModal || PersonToDelete is not null;
 
     private async Task ReloadCalendarDataAsync(CancellationToken cancellationToken)
     {
@@ -368,6 +396,7 @@
 
             DefaultPeople = snapshot.People;
             DefaultEvents = snapshot.Events;
+            PickupSettings = snapshot.Settings;
             if (SelectedPersonId is Guid selectedPersonId
                 && DefaultPeople.All(person => person.Id != selectedPersonId))
             {
@@ -444,8 +473,20 @@
 
         var personId = PersonToDelete.Id;
         await using var db = await DbFactory.CreateDbContextAsync();
+        var pickupSettings = await db.Settings.SingleOrDefaultAsync(item => item.Id == 1);
+        if (pickupSettings?.PickupPersonOneId == personId)
+        {
+            pickupSettings.PickupPersonOneId = null;
+        }
+
+        if (pickupSettings?.PickupPersonTwoId == personId)
+        {
+            pickupSettings.PickupPersonTwoId = null;
+        }
+
         db.People.Remove(new Person { Id = personId });
         await db.SaveChangesAsync();
+        PickupSettings = pickupSettings ?? PickupSettings;
         DefaultPeople.RemoveAll(person => person.Id == personId);
         DefaultEvents.RemoveAll(calendarEvent => calendarEvent.PersonId == personId);
         if (SelectedPersonId == personId)
@@ -500,6 +541,20 @@
         EventToDuplicate = null;
         IsSeriesEdit = false;
         return Task.CompletedTask;
+    }
+
+    private Task ClosePickupSettingsModal()
+    {
+        ShowPickupSettingsModal = false;
+        return Task.CompletedTask;
+    }
+
+    private async Task SavePickupSettings(FamilyHubSettings settings)
+    {
+        await CalendarDataService.SaveSettingsAsync(settings);
+        PickupSettings = settings;
+        LocalDataVersion++;
+        ShowPickupSettingsModal = false;
     }
 
     private void ChangeWeek(int weeks) => WeekStart = CalendarWeek.Shift(WeekStart, weeks);

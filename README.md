@@ -79,6 +79,8 @@ FamilyHub uses a local SQLite database at `FamilyHub.Web/familyhub.db`. The appl
 
 The calendar opens on the current Monday-to-Sunday week. Use the chevrons to navigate weeks, select a family member to filter events, or create, edit, duplicate, and delete events. Each event stores its selected date and start/end times. When adding an event, enable **Upprepa varje vecka**, choose one or more weekdays, and set an end date (up to two years from the start). Recurring occurrences can be edited or deleted individually, or managed as a whole series.
 
+Preschool pickup participants are selected with **Välj personer** in the dashboard header. Mark an event as **Arbetsevent** when creating or editing it; event titles and family member names do not affect pickup calculations. The app compares the selected participants' latest work-event end times for the current day. Existing events titled “Jobb” are marked as work events by the database migration.
+
 Open calendars check SQLite for changes every 30 seconds so edits from another household device appear automatically. Refresh pauses while an edit or event-action dialog is open.
 
 Deleting one recurring event hides just that occurrence while retaining its deletion marker. Editing one occurrence saves it as an override. Editing the whole series updates generated occurrences but preserves those deletions and overrides for dates that remain in the series; an exception is removed if its date is no longer included in the revised schedule.
