@@ -1,0 +1,110 @@
+@using System.Globalization
+
+<BaseModal IsOpen="@IsOpen" OnClose="Close">
+    @if (Event is not null)
+    {
+        <div class="modal-header">
+            <h2>@(ConfirmingDelete ? "Ta bort event?" : Event.Title)</h2>
+            <button type="button" class="close-btn" aria-label="Stäng" @onclick="Close">✕</button>
+        </div>
+
+        @if (ConfirmingDelete)
+        {
+            <p>@(Event.RecurrenceSeriesId is null ? "Eventet tas bort permanent." : "Ta bort bara detta tillfälle eller hela den återkommande serien?")</p>
+            <div class="event-actions">
+                @if (Event.RecurrenceSeriesId is not null)
+                {
+                    <button type="button" class="save-btn delete-btn" @onclick="Delete">Ta bort detta tillfälle</button>
+                    <button type="button" class="save-btn delete-btn" @onclick="DeleteSeries">Ta bort hela serien</button>
+                }
+                else
+                {
+                    <button type="button" class="save-btn delete-btn" @onclick="Delete">Ta bort</button>
+                }
+                <button type="button" class="save-btn secondary-btn" @onclick="() => ConfirmingDelete = false">Avbryt</button>
+            </div>
+        }
+        else
+        {
+            <p>@Event.Start.ToString("dddd d MMMM, HH:mm", SwedishCulture) – @Event.End.ToString("HH:mm")</p>
+            <div class="event-actions">
+                @if (Event.RecurrenceSeriesId is not null)
+                {
+                    <button type="button" class="save-btn" @onclick="Edit">Redigera detta tillfälle</button>
+                    <button type="button" class="save-btn" @onclick="EditSeries">Redigera hela serien</button>
+                }
+                else
+                {
+                    <button type="button" class="save-btn" @onclick="Edit">Redigera</button>
+                }
+                <button type="button" class="save-btn secondary-btn" @onclick="Duplicate">Duplicera</button>
+                <button type="button" class="save-btn delete-btn" @onclick="() => ConfirmingDelete = true">Ta bort</button>
+            </div>
+        }
+    }
+</BaseModal>
+
+@code {
+    [Parameter]
+    public bool IsOpen { get; set; }
+
+    [Parameter]
+    public Event? Event { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    [Parameter]
+    public EventCallback OnEdit { get; set; }
+
+    [Parameter]
+    public EventCallback OnDuplicate { get; set; }
+
+    [Parameter]
+    public EventCallback OnDelete { get; set; }
+
+    [Parameter]
+    public EventCallback OnEditSeries { get; set; }
+
+    [Parameter]
+    public EventCallback OnDeleteSeries { get; set; }
+
+    private static readonly CultureInfo SwedishCulture = CultureInfo.GetCultureInfo("sv-SE");
+    private bool ConfirmingDelete;
+
+    private async Task Edit()
+    {
+        ConfirmingDelete = false;
+        await OnEdit.InvokeAsync();
+    }
+
+    private async Task Duplicate()
+    {
+        ConfirmingDelete = false;
+        await OnDuplicate.InvokeAsync();
+    }
+
+    private async Task EditSeries()
+    {
+        ConfirmingDelete = false;
+        await OnEditSeries.InvokeAsync();
+    }
+
+    private async Task Delete()
+    {
+        ConfirmingDelete = false;
+        await OnDelete.InvokeAsync();
+    }
+
+    private async Task DeleteSeries()
+    {
+        ConfirmingDelete = false;
+        await OnDeleteSeries.InvokeAsync();
+    }
+
+    private async Task Close()
+    {
+        ConfirmingDelete = false;
+        await OnClose.InvokeAsync();
+    }
+}

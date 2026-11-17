@@ -1,0 +1,611 @@
+@page "/"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+
+@using System
+@using System.Globalization
+@using System.Linq
+@using System.Collections.Generic
+@using FamilyHub.Web.Components.Modals
+@using FamilyHub.Web.Data
+@using FamilyHub.Web.Services
+@using Microsoft.EntityFrameworkCore
+
+@inject IDbContextFactory<FamilyHubDbContext> DbFactory
+@inject CalendarService CalendarService
+@inject CalendarDataService CalendarDataService
+@inject ICalendarClock CalendarClock
+@inject ILogger<Home> Logger
+
+<PageTitle>Home</PageTitle>
+
+<div class="dashboard">
+
+    <header class="header">
+        <div class="header-stat header-clock">
+            <span class="header-label"><i class="bi bi-clock" aria-hidden="true"></i> Klockan</span>
+            <time class="clock" datetime="@CurrentTime.ToString("HH:mm")">@CurrentTime.ToString("HH:mm")</time>
+        </div>
+        <div class="header-date">
+            <span class="header-day">@SwedishCulture.TextInfo.ToTitleCase(CurrentTime.ToString("dddd", SwedishCulture))</span>
+            <time class="header-full-date" datetime="@CurrentTime.ToString("yyyy-MM-dd")">
+                @SwedishCulture.TextInfo.ToTitleCase(CurrentTime.ToString("d MMMM yyyy", SwedishCulture))
+            </time>
+        </div>
+        <div class="header-stat header-week">
+            <span class="header-label"><i class="bi bi-calendar-week" aria-hidden="true"></i> Vecka</span>
+            <strong>@Week</strong>
+        </div>
+        @{
+            var pickup = PreschoolPickup;
+        }
+        <div class="header-stat header-pickup">
+            <span class="header-label"><i class="bi bi-backpack" aria-hidden="true"></i> Hämtar på förskolan</span>
+            @if (pickup.Status == PreschoolPickupStatus.Assigned)
+            {
+                <strong>@pickup.Person!.Name</strong>
+                <span class="pickup-detail">Slutar kl. @pickup.EndTime!.Value.ToString("HH:mm")</span>
+            }
+            else if (pickup.Status == PreschoolPickupStatus.SameEndTime)
+            {
+                <span class="pickup-empty">Mamma och pappa slutar samtidigt</span>
+            }
+            else
+            {
+                <span class="pickup-empty">Inget gemensamt jobb idag</span>
+            }
+            <form method="post" action="/auth/logout" class="auth-logout">
+                <AntiforgeryToken />
+                <button type="submit">Logga ut</button>
+            </form>
+        </div>
+        @if (CalendarRefreshError)
+        {
+            <p class="calendar-refresh-error" role="status">Kalendern kunde inte uppdateras. Försöker igen automatiskt.</p>
+        }
+    </header>
+
+    <div class="sidebar">
+        <div>
+            <h3>Familjen</h3>
+            <button @onclick="() => ShowAddPersonModal = true">
+                <i class="bi bi-person-plus-fill" style="margin-right:5px;"></i>Person
+            </button>
+
+
+        </div>
+        <ul class="people-list">
+            @foreach (var person in DefaultPeople)
+            {
+                <li class="person-item">
+                    <div class="person-card-container" style="--person-color:@person.Color">
+                        <button type="button"
+                                class="person-card @(SelectedPersonId == person.Id ? "selected" : "")"
+                                aria-pressed="@(SelectedPersonId == person.Id)"
+                                @onclick="() => TogglePersonFilter(person.Id)">
+                            <span class="avatar">@(string.IsNullOrEmpty(person.Name) ? "?" : person.Name[..1])</span>
+                            <span class="person-content">
+                                <span class="person-name">@person.Name</span>
+                                <span class="event-count">@WeekEvents.Count(e => e.PersonId == person.Id) event</span>
+                            </span>
+                        </button>
+                        <div class="person-actions" role="group" aria-label="Hantera @person.Name">
+                            <button type="button" title="Redigera @person.Name" aria-label="Redigera @person.Name"
+                                    @onclick="() => EditPerson(person)">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button type="button" class="delete-person-action" title="Ta bort @person.Name" aria-label="Ta bort @person.Name"
+                                    @onclick="() => AskDeletePerson(person)">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                </li>
+            }
+            <div class="add-event-button" style="margin-top: 20px;">
+                <button @onclick="() => ShowAddEventModal = true">
+                    <i class="bi bi-plus"></i> Lägg till event
+                </button>
+            </div>
+        </ul>
+    </div>
+
+    <div class="grid">
+        <div class="calendar-nav-spacer"></div>
+        <div class="day-titles">
+            <button type="button" class="week-chevron previous" aria-label="Visa föregående vecka" @onclick="() => ChangeWeek(-1)">
+                <i class="bi bi-chevron-left"></i>
+            </button>
+            @foreach(var day in WeekDays)
+            {
+                <div class="day-title @(day.Date == CurrentTime.Date ? "today" : "")">
+                    <span>@day.ToString("ddd", SwedishCulture)</span>
+                    <strong>@day.Day</strong>
+                </div>
+            }
+            <button type="button" class="week-chevron next" aria-label="Visa nästa vecka" @onclick="() => ChangeWeek(1)">
+                <i class="bi bi-chevron-right"></i>
+            </button>
+        </div>
+        <div class="time-labels">
+            @foreach(var hour in Hours)
+            {
+                <div class="time-label">@hour:00</div>
+            }
+        </div>
+        <div class="events">
+            @for(int i = 0; i < 7; i++)
+            {
+                var day = WeekStart.AddDays(i);
+                var dayEvents = EventsForCurrentWeek
+                    .Where(calendarEvent => calendarEvent.Start.Date == day)
+                    .OrderBy(calendarEvent => calendarEvent.Start)
+                    .ToList();
+                <div class="day">
+
+                    @for(var hour = 7; hour <= 21; hour++)
+                    {
+                        <div class="hour-line"></div>
+                    }
+
+                    @foreach(var ev in dayEvents)
+                    {
+                        var person = DefaultPeople.FirstOrDefault(p => p.Id == ev.PersonId);
+                        <button type="button"
+                                class="event"
+                                style="background-color:@person?.Color; @(GetEventStyle(ev, dayEvents));"
+                                aria-label="@($"{ev.Title}, {ev.Start:HH:mm}–{ev.End:HH:mm}, {person?.Name}. Hantera event")"
+                                @onclick="() => OpenEventActions(ev)">
+                            <span>@ev.Start.ToString("HH:mm") - @ev.End.ToString("HH:mm")</span>
+                            <span class="event-title">@ev.Title</span>
+                            <span>@person?.Name</span>
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+    <section class="bottom" aria-label="Kommande event">
+        <h2 class="upcoming-heading">
+            <i class="bi bi-calendar2-check" aria-hidden="true"></i>
+            Kommande
+        </h2>
+        @if (UpcomingEvents.Count == 0)
+        {
+            <p class="upcoming-empty">Inga kommande event ännu.</p>
+        }
+        else
+        {
+            @foreach (var calendarEvent in UpcomingEvents)
+            {
+                var person = DefaultPeople.FirstOrDefault(item => item.Id == calendarEvent.PersonId);
+                <button type="button"
+                        class="upcoming-event"
+                        @onclick="() => OpenEventActions(calendarEvent)"
+                        aria-label="@($"{calendarEvent.Title}, {calendarEvent.Start.ToString("ddd d MMM", SwedishCulture)} kl. {calendarEvent.Start:HH:mm}, {person?.Name ?? "Okänd person"}. Hantera event")">
+                    <span class="upcoming-event-date">@calendarEvent.Start.ToString("ddd d MMM", SwedishCulture)</span>
+                    <span class="upcoming-event-time">@calendarEvent.Start.ToString("HH:mm")</span>
+                    <span class="upcoming-event-details">
+                        <strong>@calendarEvent.Title</strong>
+                        <span>@(person?.Name ?? "Okänd person")</span>
+                    </span>
+                </button>
+            }
+        }
+    </section>
+
+    <AddPersonModal
+        IsOpen="@ShowAddPersonModal"
+        OnClose="ClosePersonModal"
+        EditPerson="@PersonBeingEdited"
+        OnSave="SavePerson" />
+
+    <AddEventModal
+        IsOpen="@ShowAddEventModal"
+        OnClose="CloseAddEventModal"
+        Persons="@DefaultPeople"
+        InitialDate="@EventInitialDate"
+        EditEvent="@EventBeingEdited"
+        DuplicateEvent="@EventToDuplicate"
+        IsSeriesEdit="@IsSeriesEdit"
+        OnSave="SaveEvents" />
+
+    <EventActionsModal
+        IsOpen="@ShowEventActionsModal"
+        Event="@SelectedEvent"
+        OnClose="() => ShowEventActionsModal = false"
+        OnEdit="EditSelectedEvent"
+        OnEditSeries="EditSelectedSeries"
+        OnDuplicate="DuplicateSelectedEvent"
+        OnDelete="DeleteSelectedEvent"
+        OnDeleteSeries="DeleteSelectedSeries" />
+
+    <BaseModal IsOpen="@(PersonToDelete is not null)" OnClose="CancelDeletePerson">
+        @if (PersonToDelete is not null)
+        {
+            <div class="modal-header">
+                <h2>Ta bort @PersonToDelete.Name?</h2>
+                <button type="button" class="close-btn" aria-label="Stäng" @onclick="CancelDeletePerson">✕</button>
+            </div>
+            <p>Personen och alla personens event tas bort permanent.</p>
+            <div class="event-actions">
+                <button type="button" class="save-btn delete-btn" @onclick="DeletePerson">Ta bort person</button>
+                <button type="button" class="save-btn secondary-btn" @onclick="CancelDeletePerson">Avbryt</button>
+            </div>
+        }
+    </BaseModal>
+</div>
+
+
+@code {
+    private bool ShowAddPersonModal;
+    private bool ShowAddEventModal;
+    private bool ShowEventActionsModal;
+    private bool IsSeriesEdit;
+    private DateTime WeekStart;
+    private DateTime CurrentTime;
+    private DateTime? SelectedDate;
+    private Guid? SelectedPersonId;
+    private Event? SelectedEvent;
+    private Event? EventBeingEdited;
+    private Event? EventToDuplicate;
+    private Person? PersonBeingEdited;
+    private Person? PersonToDelete;
+    private readonly CancellationTokenSource RefreshCancellation = new();
+    private Task? ClockRefreshTask;
+    private Task? CalendarRefreshTask;
+    private int LocalDataVersion;
+    private bool CalendarRefreshError;
+    private static readonly CultureInfo SwedishCulture = CultureInfo.GetCultureInfo("sv-SE");
+    private DateTime[] WeekDays => Enumerable.Range(0, 7).Select(offset => WeekStart.AddDays(offset)).ToArray();
+    private int Week => SwedishCulture.Calendar.GetWeekOfYear(WeekStart, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
+    private DateTime EventInitialDate => SelectedDate ?? WeekStart;
+    private int[] Hours = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+    private List<Person> DefaultPeople = [];
+    private List<Event> DefaultEvents = [];
+    private IEnumerable<Event> WeekEvents => DefaultEvents.Where(calendarEvent =>
+        calendarEvent.Start.Date >= WeekStart
+        && calendarEvent.Start.Date < WeekStart.AddDays(7));
+    private IEnumerable<Event> EventsForCurrentWeek => WeekEvents.Where(calendarEvent =>
+        SelectedPersonId is null || calendarEvent.PersonId == SelectedPersonId);
+    private PreschoolPickup PreschoolPickup => CalendarService.GetPreschoolPickup(DefaultPeople, DefaultEvents);
+
+    private List<Event> UpcomingEvents => DefaultEvents
+        .Where(calendarEvent => calendarEvent.Start >= CurrentTime)
+        .Where(calendarEvent => SelectedPersonId is null || calendarEvent.PersonId == SelectedPersonId)
+        .OrderBy(calendarEvent => calendarEvent.Start)
+        .Take(3)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        CurrentTime = CalendarClock.Now;
+        WeekStart = CalendarWeek.GetStart(CurrentTime.Date);
+
+        var snapshot = await CalendarDataService.LoadAsync(RefreshCancellation.Token);
+        DefaultPeople = snapshot.People;
+        DefaultEvents = snapshot.Events;
+
+        ClockRefreshTask = RefreshClockAsync(RefreshCancellation.Token);
+        CalendarRefreshTask = RefreshCalendarDataPeriodicallyAsync(RefreshCancellation.Token);
+    }
+
+    private async Task RefreshClockAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var now = CalendarClock.Now;
+                var ticksUntilNextMinute = TimeSpan.TicksPerMinute
+                    - now.TimeOfDay.Ticks % TimeSpan.TicksPerMinute;
+                await Task.Delay(TimeSpan.FromTicks(ticksUntilNextMinute), cancellationToken);
+
+                await InvokeAsync(() =>
+                {
+                    var refreshedTime = CalendarClock.Now;
+                    if (WeekStart == CalendarWeek.GetStart(CurrentTime.Date))
+                    {
+                        WeekStart = CalendarWeek.GetStart(refreshedTime.Date);
+                    }
+
+                    CurrentTime = refreshedTime;
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task RefreshCalendarDataPeriodicallyAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                if (HasOpenDialog)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await ReloadCalendarDataAsync(cancellationToken);
+                }
+                catch (Microsoft.Data.Sqlite.SqliteException exception)
+                {
+                    Logger.LogError(exception, "Failed to refresh calendar data from SQLite.");
+                    await InvokeAsync(() =>
+                    {
+                        CalendarRefreshError = true;
+                        StateHasChanged();
+                    });
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private bool HasOpenDialog =>
+        ShowAddPersonModal || ShowAddEventModal || ShowEventActionsModal || PersonToDelete is not null;
+
+    private async Task ReloadCalendarDataAsync(CancellationToken cancellationToken)
+    {
+        var dataVersion = LocalDataVersion;
+        var snapshot = await CalendarDataService.LoadAsync(cancellationToken);
+        await InvokeAsync(() =>
+        {
+            if (dataVersion != LocalDataVersion || HasOpenDialog)
+            {
+                return;
+            }
+
+            DefaultPeople = snapshot.People;
+            DefaultEvents = snapshot.Events;
+            if (SelectedPersonId is Guid selectedPersonId
+                && DefaultPeople.All(person => person.Id != selectedPersonId))
+            {
+                SelectedPersonId = null;
+            }
+
+            CalendarRefreshError = false;
+            StateHasChanged();
+        });
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        RefreshCancellation.Cancel();
+        if (ClockRefreshTask is not null)
+        {
+            await ClockRefreshTask;
+        }
+
+        if (CalendarRefreshTask is not null)
+        {
+            await CalendarRefreshTask;
+        }
+
+        RefreshCancellation.Dispose();
+    }
+
+    private async Task SavePerson(Person person)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (PersonBeingEdited is null)
+        {
+            db.People.Add(person);
+        }
+        else
+        {
+            db.People.Update(person);
+            DefaultPeople.RemoveAll(existingPerson => existingPerson.Id == person.Id);
+        }
+
+        await db.SaveChangesAsync();
+        DefaultPeople.Add(person);
+        LocalDataVersion++;
+        PersonBeingEdited = null;
+    }
+
+    private void EditPerson(Person person)
+    {
+        PersonBeingEdited = person;
+        ShowAddPersonModal = true;
+    }
+
+    private Task ClosePersonModal()
+    {
+        ShowAddPersonModal = false;
+        PersonBeingEdited = null;
+        return Task.CompletedTask;
+    }
+
+    private void AskDeletePerson(Person person) => PersonToDelete = person;
+
+    private Task CancelDeletePerson()
+    {
+        PersonToDelete = null;
+        return Task.CompletedTask;
+    }
+
+    private async Task DeletePerson()
+    {
+        if (PersonToDelete is null)
+        {
+            return;
+        }
+
+        var personId = PersonToDelete.Id;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.People.Remove(new Person { Id = personId });
+        await db.SaveChangesAsync();
+        DefaultPeople.RemoveAll(person => person.Id == personId);
+        DefaultEvents.RemoveAll(calendarEvent => calendarEvent.PersonId == personId);
+        if (SelectedPersonId == personId)
+        {
+            SelectedPersonId = null;
+        }
+
+        LocalDataVersion++;
+        PersonToDelete = null;
+    }
+
+    private async Task SaveEvents(List<Event> eventsToSave)
+    {
+        if (IsSeriesEdit && EventBeingEdited?.RecurrenceSeriesId is Guid seriesId)
+        {
+            await CalendarDataService.SaveSeriesAsync(seriesId, eventsToSave, CalendarService);
+            var snapshot = await CalendarDataService.LoadAsync(RefreshCancellation.Token);
+            DefaultPeople = snapshot.People;
+            DefaultEvents = snapshot.Events;
+        }
+        else if (EventBeingEdited is not null)
+        {
+            var updatedEvent = eventsToSave.Single();
+            await CalendarDataService.UpdateOccurrenceAsync(updatedEvent);
+            DefaultEvents.RemoveAll(existingEvent => existingEvent.Id == updatedEvent.Id);
+            if (!updatedEvent.RecurrenceIsDeleted)
+            {
+                DefaultEvents.Add(updatedEvent);
+            }
+        }
+        else
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.Events.AddRange(eventsToSave);
+            await db.SaveChangesAsync();
+            DefaultEvents.AddRange(eventsToSave);
+        }
+
+        LocalDataVersion++;
+        var calendarEvent = eventsToSave.OrderBy(item => item.Start).First();
+        EventBeingEdited = null;
+        EventToDuplicate = null;
+        IsSeriesEdit = false;
+        SelectedDate = calendarEvent.Start.Date;
+        WeekStart = CalendarWeek.GetStart(calendarEvent.Start.Date);
+    }
+
+    private Task CloseAddEventModal()
+    {
+        ShowAddEventModal = false;
+        EventBeingEdited = null;
+        EventToDuplicate = null;
+        IsSeriesEdit = false;
+        return Task.CompletedTask;
+    }
+
+    private void ChangeWeek(int weeks) => WeekStart = CalendarWeek.Shift(WeekStart, weeks);
+
+    private void TogglePersonFilter(Guid personId) =>
+        SelectedPersonId = SelectedPersonId == personId ? null : personId;
+
+    private void OpenEventActions(Event calendarEvent)
+    {
+        SelectedEvent = calendarEvent;
+        ShowEventActionsModal = true;
+    }
+
+    private void EditSelectedEvent()
+    {
+        EventBeingEdited = SelectedEvent;
+        EventToDuplicate = null;
+        IsSeriesEdit = false;
+        SelectedDate = SelectedEvent?.Start.Date;
+        ShowEventActionsModal = false;
+        ShowAddEventModal = true;
+    }
+
+    private void EditSelectedSeries()
+    {
+        EventBeingEdited = SelectedEvent;
+        EventToDuplicate = null;
+        IsSeriesEdit = true;
+        SelectedDate = SelectedEvent?.RecurrenceStart?.Date ?? SelectedEvent?.Start.Date;
+        ShowEventActionsModal = false;
+        ShowAddEventModal = true;
+    }
+
+    private void DuplicateSelectedEvent()
+    {
+        EventBeingEdited = null;
+        EventToDuplicate = SelectedEvent;
+        IsSeriesEdit = false;
+        SelectedDate = SelectedEvent?.Start.Date;
+        ShowEventActionsModal = false;
+        ShowAddEventModal = true;
+    }
+
+    private async Task DeleteSelectedEvent()
+    {
+        if (SelectedEvent is null)
+        {
+            return;
+        }
+
+        await CalendarDataService.DeleteOccurrenceAsync(SelectedEvent);
+        DefaultEvents.RemoveAll(calendarEvent => calendarEvent.Id == SelectedEvent.Id);
+        LocalDataVersion++;
+        SelectedEvent = null;
+        ShowEventActionsModal = false;
+    }
+
+    private async Task DeleteSelectedSeries()
+    {
+        if (SelectedEvent?.RecurrenceSeriesId is not Guid seriesId)
+        {
+            return;
+        }
+
+        await CalendarDataService.DeleteSeriesAsync(seriesId);
+        DefaultEvents.RemoveAll(calendarEvent => calendarEvent.RecurrenceSeriesId == seriesId);
+        LocalDataVersion++;
+        SelectedEvent = null;
+        ShowEventActionsModal = false;
+    }
+
+    private string GetEventStyle(Event calendarEvent, List<Event> dayEvents)
+    {
+        const double VisibleHours = 15;
+
+        var laneEnds = new List<DateTime>();
+        var lanes = new Dictionary<Guid, int>();
+        foreach (var item in dayEvents)
+        {
+            var lane = laneEnds.FindIndex(laneEnd => laneEnd <= item.Start);
+            if (lane < 0)
+            {
+                lane = laneEnds.Count;
+                laneEnds.Add(item.End);
+            }
+            else
+            {
+                laneEnds[lane] = item.End;
+            }
+
+            lanes[item.Id] = lane;
+        }
+
+        var laneCount = laneEnds.Count;
+        var eventLane = lanes[calendarEvent.Id];
+        var start = Math.Clamp(calendarEvent.Start.TimeOfDay.TotalHours - 7, 0, VisibleHours);
+        var end = Math.Clamp(calendarEvent.End.TimeOfDay.TotalHours - 7, 0, VisibleHours);
+
+        var height = Math.Max((end - start) / VisibleHours * 100, 3.4);
+        var top = Math.Min(start / VisibleHours * 100, 100 - height);
+
+        return FormattableString.Invariant($"""
+            top:{top}%;
+            height:{height}%;
+            left:calc({eventLane * 100.0 / laneCount}% + 4px);
+            width:calc({100.0 / laneCount}% - 8px);
+            """);
+    }
+}

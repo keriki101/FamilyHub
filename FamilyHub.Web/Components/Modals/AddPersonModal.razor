@@ -1,0 +1,110 @@
+<BaseModal IsOpen="@IsOpen" OnClose="Close">
+
+    <div class="modal-header">
+        <h2>@(EditPerson is null ? "Lägg till person" : "Redigera person")</h2>
+        <button class="close-btn"@onclick="Close"> ✕ </button>
+    </div>
+
+    <div class="form-group">
+        <label>Namn</label>
+        <input @bind="Name" placeholder="t.ex. Mormor" maxlength="80" />
+    </div>
+
+    <div class="form-group">
+        <label>Färg</label>
+        <div class="color-grid">
+            @foreach(var color in Colors)
+            {
+                <button
+                    class="color-picker @(SelectedColor == color ? "selected" : "")"
+                    style="background:@color"
+                    @onclick="() => SelectedColor = color">
+                </button>
+            }
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(ValidationError))
+    {
+        <p class="validation-message" role="alert">@ValidationError</p>
+    }
+
+    <button class="save-btn" @onclick="Save">@(EditPerson is null ? "Spara person" : "Spara ändringar")</button>
+
+</BaseModal>
+
+@code {
+
+    [Parameter]
+    public bool IsOpen { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    [Parameter]
+    public EventCallback<Person> OnSave { get; set; }
+
+    [Parameter]
+    public Person? EditPerson { get; set; }
+
+    private string Name = "";
+    private string? ValidationError;
+
+    private string SelectedColor = "#5E8B7E";
+    private Guid? LoadedPersonId;
+    private bool WasOpen;
+
+    private readonly string[] Colors =
+    [
+        "#E26D5A",
+        "#D9A441",
+        "#5E8B7E",
+        "#4A6FA5",
+        "#9C73B8",
+        "#C06C9D",
+        "#469090",
+        "#BD5D38",
+        "#72963D",
+        "#967555"
+    ];
+
+    protected override void OnParametersSet()
+    {
+        if (IsOpen && (!WasOpen || LoadedPersonId != EditPerson?.Id))
+        {
+            Name = EditPerson?.Name ?? "";
+            SelectedColor = EditPerson?.Color ?? Colors[2];
+            ValidationError = null;
+            LoadedPersonId = EditPerson?.Id;
+        }
+
+        WasOpen = IsOpen;
+    }
+
+    private async Task Save()
+    {
+        var name = Name.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            ValidationError = "Ange ett namn.";
+            return;
+        }
+
+        await OnSave.InvokeAsync(new Person
+        {
+            Id = EditPerson?.Id ?? Guid.NewGuid(),
+            Name = name,
+            Color = SelectedColor
+        });
+
+        Name = "";
+        ValidationError = null;
+        LoadedPersonId = null;
+        await Close();
+    }
+
+    private async Task Close()
+    {
+        await OnClose.InvokeAsync();
+    }
+}

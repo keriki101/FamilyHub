@@ -1,0 +1,291 @@
+@using FamilyHub.Web.Services
+
+<BaseModal IsOpen="@IsOpen"
+           OnClose="Close">
+
+    <div class="modal-header">
+        <h2>@(EditEvent is null ? "Lägg till event" : IsSeriesEdit ? "Redigera återkommande serie" : "Redigera event")</h2>
+        <button class="close-btn"@onclick="Close"> ✕ </button>
+    </div>
+
+    <div class="form-group">
+        <label for="eventTitle">Titel</label>
+        <input id="eventTitle" @bind="Title" placeholder="t.ex. Fotbollsträning" maxlength="120" />
+    </div>
+
+    <div class="form-group">
+        <label for="eventPerson">Person</label>
+
+        <select id="eventPerson"
+                class="form-select"
+                @bind="SelectedPersonId">
+            @foreach (var person in Persons)
+            {
+                <option value="@person.Id">@person.Name</option>
+            }
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="eventDate">Datum</label>
+        <input id="eventDate" type="date" @bind="EventDate" />
+    </div>
+
+    <div class="form-group">
+        <label>Veckodag</label>
+        <span>@(EventDate?.ToString("dddd", SwedishCulture) ?? "")</span>
+    </div>
+
+    <div class="form-group">
+        <label for="eventStart">Start</label>
+        <input id="eventStart" type="time" @bind="StartTime" />
+    </div>
+
+    <div class="form-group">
+        <label for="eventEnd">Slut</label>
+        <input id="eventEnd" type="time" @bind="EndTime" />
+    </div>
+
+    @if (CanSetRecurrence)
+    {
+        <fieldset class="recurrence-options">
+            <legend>@(IsSeriesEdit ? "Veckoschema" : "Återkommande")</legend>
+            @if (!IsSeriesEdit)
+            {
+                <label class="repeat-toggle">
+                    <input type="checkbox" @bind="RepeatWeekly" />
+                    Upprepa varje vecka
+                </label>
+            }
+            @if (RepeatWeekly || IsSeriesEdit)
+            {
+                <div class="weekday-options">
+                    @foreach (var day in Weekdays)
+                    {
+                        <label>
+                            <input type="checkbox"
+                                   checked="@IsDaySelected(day)"
+                                   @onchange="args => SetDaySelected(day, args)" />
+                            @SwedishCulture.DateTimeFormat.GetAbbreviatedDayName(day)
+                        </label>
+                    }
+                </div>
+                <div class="form-group">
+                    <label for="recurrenceUntil">Upprepa till och med</label>
+                    <input id="recurrenceUntil" type="date" @bind="RecurrenceUntil" />
+                </div>
+            }
+        </fieldset>
+    }
+    else if (EditEvent?.RecurrenceSeriesId is not null)
+    {
+        <p class="recurrence-note">Detta ändrar bara det här tillfället. Välj ”Redigera hela serien” för att ändra alla.</p>
+    }
+
+    @if (!string.IsNullOrEmpty(ValidationError))
+    {
+        <p class="validation-message" role="alert">@ValidationError</p>
+    }
+
+    <button class="save-btn"
+            @onclick="Save">
+        @(IsSeriesEdit ? "Spara hela serien" : "Spara event")
+    </button>
+
+</BaseModal>
+
+@code {
+    [Inject]
+    private CalendarService CalendarService { get; set; } = default!;
+
+    [Parameter]
+    public bool IsOpen { get; set; }
+
+    [Parameter]
+    public List<Person> Persons { get; set; } = [];
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    [Parameter]
+    public EventCallback<List<Event>> OnSave { get; set; }
+
+    [Parameter]
+    public DateTime InitialDate { get; set; } = DateTime.Today;
+
+    [Parameter]
+    public Event? EditEvent { get; set; }
+
+    [Parameter]
+    public Event? DuplicateEvent { get; set; }
+
+    [Parameter]
+    public bool IsSeriesEdit { get; set; }
+
+    private Guid? SelectedPersonId;
+    private string Title = "";
+    private TimeOnly? StartTime = new(8, 0);
+    private TimeOnly? EndTime = new(9, 0);
+    private DateOnly? EventDate = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly? RecurrenceStartDate;
+    private DateOnly? RecurrenceUntil = DateOnly.FromDateTime(DateTime.Today.AddMonths(3));
+    private int RecurrenceDays;
+    private bool RepeatWeekly;
+    private string? ValidationError;
+    private static readonly CultureInfo SwedishCulture = CultureInfo.GetCultureInfo("sv-SE");
+    private Guid? LoadedEventId;
+    private bool WasOpen;
+    private bool CanSetRecurrence => EditEvent is null || IsSeriesEdit;
+    private static readonly DayOfWeek[] Weekdays =
+    [
+        DayOfWeek.Monday,
+        DayOfWeek.Tuesday,
+        DayOfWeek.Wednesday,
+        DayOfWeek.Thursday,
+        DayOfWeek.Friday,
+        DayOfWeek.Saturday,
+        DayOfWeek.Sunday
+    ];
+
+    protected override void OnParametersSet()
+    {
+        if (SelectedPersonId is null && Persons.Count > 0)
+        {
+            SelectedPersonId = Persons[0].Id;
+        }
+
+        var sourceEvent = EditEvent ?? DuplicateEvent;
+        if (IsOpen && (!WasOpen || LoadedEventId != sourceEvent?.Id || IsSeriesEdit != loadedAsSeries))
+        {
+            Title = sourceEvent?.Title ?? "";
+            SelectedPersonId = sourceEvent?.PersonId ?? SelectedPersonId;
+            EventDate = DateOnly.FromDateTime(sourceEvent?.Start.Date ?? InitialDate.Date);
+            StartTime = sourceEvent is null ? new TimeOnly(8, 0) : TimeOnly.FromDateTime(sourceEvent.Start);
+            EndTime = sourceEvent is null ? new TimeOnly(9, 0) : TimeOnly.FromDateTime(sourceEvent.End);
+            RecurrenceStartDate = sourceEvent?.RecurrenceStart is { } recurrenceStart
+                ? DateOnly.FromDateTime(recurrenceStart)
+                : EventDate;
+            RecurrenceUntil = sourceEvent?.RecurrenceUntil is { } recurrenceUntil
+                ? DateOnly.FromDateTime(recurrenceUntil)
+                : DateOnly.FromDateTime((sourceEvent?.Start.Date ?? InitialDate.Date).AddMonths(3));
+            RecurrenceDays = sourceEvent?.RecurrenceDays
+                ?? (1 << (int)(sourceEvent?.Start.DayOfWeek ?? InitialDate.DayOfWeek));
+            RepeatWeekly = EditEvent?.RecurrenceSeriesId is not null;
+            ValidationError = null;
+            LoadedEventId = sourceEvent?.Id;
+            loadedAsSeries = IsSeriesEdit;
+        }
+
+        WasOpen = IsOpen;
+    }
+
+    private bool loadedAsSeries;
+
+    private async Task Save()
+    {
+        var title = Title.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            ValidationError = "Ange en titel.";
+            return;
+        }
+
+        if (SelectedPersonId is not Guid personId || Persons.All(person => person.Id != personId))
+        {
+            ValidationError = "Lägg till en person innan du skapar ett event.";
+            return;
+        }
+
+        if (StartTime is not { } start
+            || EndTime is not { } end
+            || end <= start)
+        {
+            ValidationError = "Ange en sluttid som är senare än starttiden.";
+            return;
+        }
+
+        if (start < new TimeOnly(7, 0) || end > new TimeOnly(22, 0))
+        {
+            ValidationError = "Välj en tid mellan 07:00 och 22:00.";
+            return;
+        }
+
+        if (EventDate is not { } date)
+        {
+            ValidationError = "Välj ett datum.";
+            return;
+        }
+
+        var eventsToSave = new List<Event>();
+        if (CanSetRecurrence && (RepeatWeekly || IsSeriesEdit))
+        {
+            var seriesStart = IsSeriesEdit && RecurrenceStartDate is { } originalStart ? originalStart : date;
+            if (RecurrenceUntil is not { } until || until < seriesStart || until.DayNumber - seriesStart.DayNumber > 730)
+            {
+                ValidationError = "Välj ett slutdatum inom två år efter startdatumet.";
+                return;
+            }
+
+            if (RecurrenceDays == 0)
+            {
+                ValidationError = "Välj minst en veckodag.";
+                return;
+            }
+
+            eventsToSave = CalendarService.CreateWeeklyOccurrences(
+                title,
+                personId,
+                seriesStart,
+                until,
+                start,
+                end,
+                RecurrenceDays,
+                EditEvent?.RecurrenceSeriesId);
+        }
+        else
+        {
+            eventsToSave.Add(new Event
+            {
+                Id = EditEvent?.Id ?? Guid.NewGuid(),
+                RecurrenceSeriesId = EditEvent?.RecurrenceSeriesId,
+                RecurrenceStart = EditEvent?.RecurrenceStart,
+                RecurrenceUntil = EditEvent?.RecurrenceUntil,
+                RecurrenceDays = EditEvent?.RecurrenceDays,
+                RecurrenceOccurrenceDate = EditEvent?.RecurrenceOccurrenceDate,
+                RecurrenceIsOverride = EditEvent?.RecurrenceIsOverride ?? false,
+                RecurrenceIsDeleted = false,
+                PersonId = personId,
+                Title = title,
+                Start = date.ToDateTime(start),
+                End = date.ToDateTime(end)
+            });
+        }
+
+        await OnSave.InvokeAsync(eventsToSave);
+
+        Title = "";
+        ValidationError = null;
+        LoadedEventId = null;
+        RepeatWeekly = false;
+        await Close();
+    }
+
+    private bool IsDaySelected(DayOfWeek day) => (RecurrenceDays & (1 << (int)day)) != 0;
+
+    private void SetDaySelected(DayOfWeek day, ChangeEventArgs args)
+    {
+        if (args.Value is bool selected && selected)
+        {
+            RecurrenceDays |= 1 << (int)day;
+        }
+        else
+        {
+            RecurrenceDays &= ~(1 << (int)day);
+        }
+    }
+
+    private async Task Close()
+    {
+        await OnClose.InvokeAsync();
+    }
+}
